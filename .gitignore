@@ -1,0 +1,16 @@
+# Build artifacts (matches at any depth — the crate lives in codebase/recall)
+target/
+
+# Local databases — never commit memories
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
