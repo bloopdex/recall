@@ -17,11 +17,21 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "wrap_help"] }
+fastembed = "4"
 rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1"
 thiserror = "2"
 time = { version = "0.3", features = ["formatting", "parsing", "local-offset", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Network crate, gated behind the opt-in `download` feature: only the
+# explicit `recall embeddings download` command may fetch model files
+# (ADR-0013). Default builds have no network code path.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
+
+[features]
+default = []
+download = ["dep:reqwest"]
 
 [dev-dependencies]
 tempfile = "3"

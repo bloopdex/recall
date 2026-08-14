@@ -38,7 +38,7 @@ fn capture_then_search_roundtrip() {
     let text = stdout(&out);
     assert!(text.contains("checkout-service"), "project missing: {text}");
     assert!(text.contains("pooling"), "solution missing: {text}");
-    assert!(text.contains("rank"), "rank missing: {text}");
+    assert!(text.contains("fused"), "fused score missing: {text}");
 }
 
 #[test]

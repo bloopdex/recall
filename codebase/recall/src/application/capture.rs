@@ -96,6 +96,11 @@ pub fn run_with_io(
     let captured_at = OffsetDateTime::now_utc();
     let id = db.insert_memory(&memory, captured_at)?;
 
+    // Semantic enrichment is best-effort and never blocks capture: if the
+    // model or the vector store is unavailable, the memory is still saved
+    // and remains keyword-searchable (ADR-0013/0014).
+    enrich_embedding(db, id, &memory);
+
     tracing::info!(
         event = "capture.success",
         id,
@@ -109,6 +114,35 @@ pub fn run_with_io(
         project: memory.project,
         skipped: false,
     })
+}
+
+/// Best-effort synchronous embedding of a freshly captured memory.
+/// Failures degrade silently to "enrich later" (recall embeddings build).
+fn enrich_embedding(db: &mut Db, id: i64, memory: &NewMemory) {
+    use crate::infrastructure::embeddings::{embedded_text, Embedder, MODEL_ID, MODEL_VERSION};
+    if !db.vec_enabled() {
+        return;
+    }
+    let embedder = match Embedder::try_load() {
+        Ok(e) => e,
+        Err(_) => {
+            tracing::info!(event = "embedding.unavailable", memory_id = id);
+            return;
+        }
+    };
+    let text = embedded_text(
+        &memory.problem,
+        memory.error.as_deref(),
+        memory.context.as_deref(),
+    );
+    match embedder.embed_one(&text) {
+        Ok(vector) => match db.insert_embedding(id, MODEL_ID, MODEL_VERSION, vector.len(), &vector)
+        {
+            Ok(()) => tracing::info!(event = "embedding.indexed", memory_id = id),
+            Err(e) => tracing::warn!(event = "embedding.store_failed", memory_id = id, error = %e),
+        },
+        Err(e) => tracing::warn!(event = "embedding.failed", memory_id = id, error = %e),
+    }
 }
 
 /// Where the problem text comes from:

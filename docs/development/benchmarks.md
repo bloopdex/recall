@@ -51,3 +51,43 @@ operation meets the target marginally on this machine; the CLI does not.
 single `git status --porcelain=v2 --branch` call, cache git detection per
 directory, and skip the `--show-toplevel` call when the cwd is unchanged.
 
+## Phase 3 — semantic layer baselines (recorded 2026-08-14)
+
+Machine: Windows 11, 16 logical CPUs, release build, all-MiniLM-L6-v2
+fp32 ONNX on CPU.
+
+**Embedding generation** (`examples/bench_embed.rs`):
+
+| Measurement | Iterations | Avg | Min | Max |
+|---|---|---|---|---|
+| Model load (per CLI invocation) | 1 | **163 ms** | — | — |
+| Single text embedding | 50 | **4.6 ms** | 1.7 | 30.9 |
+| Batch of 32 texts | 20 | **38.1 ms** | 14.5 | 77.9 |
+
+**Search latency at 10,000 entries + 10,000 vectors**
+(`examples/bench_search.rs`, synthetic deterministic vectors — latency is
+data-driven; quality is measured by the eval harness):
+
+| Engine | Query | Avg | Min | Max |
+|---|---|---|---|---|
+| FTS5 (keyword) | all six | ~3.1–3.8 ms | ~2.7 | ~5.3 |
+| Semantic (vec0 k=50) | all three | **~9.8 ms** | 9.4 | 10.5 |
+| Hybrid (RRF) | all three | **~14.5 ms** | 13.8 | 16.5 |
+
+Vector seed throughput: 10,000 vectors in ~1.3 s.
+
+Phase 3 target ("vector queries must stay interactive on 10k entries"):
+met with large margin — semantic and hybrid stay far below 100 ms.
+
+**Search quality** (`examples/eval_search.rs`, 24-memory corpus, 12
+queries, Recall@5 / Precision@5 / MRR):
+
+| Segment | FTS R@5 | FTS MRR | Hybrid R@5 | Hybrid MRR |
+|---|---|---|---|---|
+| Keyword queries (regression check) | 1.00 | 1.00 | 1.00 | 1.00 |
+| Paraphrase queries (zero keyword overlap) | 0.00 | 0.00 | **1.00** | **0.91** |
+
+Hybrid matches or exceeds FTS everywhere; on paraphrase queries it finds
+every target (7 of 8 at rank 1), where keyword search is structurally
+unable to. Re-run after any ranking/model change.
+

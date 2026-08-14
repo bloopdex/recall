@@ -34,8 +34,15 @@ recall capture --problem "sqlite database is locked" --solution "..." --force
 # Fix or clarify an existing memory (user fields only; FTS stays in sync)
 recall edit 42 --solution "set busy_timeout 5000" --error ""   # empty clears
 
-# Search past solutions (SQLite FTS5 keyword search)
+# Search past solutions (hybrid: FTS5 keyword + local semantic search)
 recall search "postgres connection pool"
+recall search --explain "postgres connection pool"   # show ranking signals
+
+# Semantic layer setup (one-time, the ONLY network step)
+cargo install --path codebase/recall --features download   # build with download support
+recall embeddings download                                  # fetch the local model
+recall embeddings build                                     # backfill existing memories
+recall embeddings status                                    # coverage report
 
 # List recent memories
 recall list --limit 20
@@ -45,7 +52,7 @@ recall list --limit 20
 
 - **Capture first, enrich later.** Only the problem and solution are required. Project name, git branch/commit, changed files, and the working directory are captured automatically (best-effort — capture still works outside git).
 - **Deduplication, deterministically.** A near-identical capture (same project + same normalized problem or error, within 30 days) is skipped with a clear message; `--force` overrides (ADR-0011).
-- **Keyword search via SQLite FTS5.** Problem and error fields are weighted higher than background text; ties break by recency. Semantic/vector search arrives in Phase 3.
+- **Hybrid search: keyword + semantic.** FTS5 keyword search (weighted bm25) fuses with local semantic search (all-MiniLM-L6-v2 embeddings via fastembed, stored in sqlite-vec) using deterministic reciprocal-rank fusion — a paraphrase like "pool keeps running out of connections" finds "connections exhausted" memories even with zero keyword overlap (ADR-0013–0016). Fully offline: the model is a local file, fetched once by the opt-in `recall embeddings download`.
 - **Local-first.** The database lives at `%LOCALAPPDATA%\recall\recall.db` (Windows) or `~/.local/share/recall/recall.db` (Linux/macOS). Override with `--db <path>` or `RECALL_DB_PATH`.
 
 ## Project structure
@@ -81,7 +88,7 @@ See [docs/development/README.md](docs/development/README.md) for the full workfl
 | 0 — Data Model & UX Research | done | Entry schema, CLI surface, privacy design |
 | 1 — Core Foundation | done | Rust project, SQLite + migrations, FTS5, error model, logging |
 | 2 — Capture MVP | done | `recall capture` (interactive/flags/stdin), `recall search`, `recall list` |
-| 3 — Semantic Search | next | Local embeddings + sqlite-vec, re-ranking |
+| 3 — Semantic Search | done | Local embeddings (MiniLM via fastembed), sqlite-vec, hybrid RRF search, eval harness |
 | 4 — Shell & Git Integration | planned | Capture from failed commands, git hooks |
 | 5 — Projects & Lifecycle | planned | Project scoping, retention |
 | 6 — Hardening | planned | <100ms @ 10k entries, redaction, encryption at rest |

@@ -40,10 +40,19 @@ All tests use temp directories/databases; none depend on personal repo state.
 
 See [benchmarks.md](benchmarks.md).
 
-- Search: `cargo run --release --example bench_search` (10k-entry FTS5
-  baseline; Phase 6 target <100 ms).
+- Search: `cargo run --release --example bench_search` (10k-entry FTS5,
+  semantic, and hybrid baselines).
 - Capture (in-process): `cargo run --release --example bench_capture`.
 - Capture (end-to-end binary): `cargo test --release --test bench_capture -- --ignored --nocapture`.
+- Embedding latency: `cargo run --release --example bench_embed`.
+- Search quality: `cargo run --release --example eval_search`
+  (Recall@5 / Precision@5 / MRR on the 24-memory corpus).
+
+## Model-dependent tests
+
+Real-model integration tests (`tests/embeddings_integration.rs` and
+`tests/pooling_probe.rs`) skip gracefully when the model is not installed.
+Install it once with: `cargo run --features download -- embeddings download`.
 
 ## Zero-network guarantee
 

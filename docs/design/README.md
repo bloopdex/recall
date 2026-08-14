@@ -38,6 +38,19 @@ opt-in (Phase 5). Auto-capture never collects environment variables;
 user-typed fields may contain secrets and Phase 6 redaction treats
 `error`/`context`/`investigation` as redactable by contract.
 
+## Semantic search (Phase 3)
+
+- `recall search "<query>"` is hybrid: FTS5 candidates + vec0 candidates
+  fused by reciprocal-rank fusion (ADR-0016), deterministic and
+  explainable; `--explain` shows per-engine signals. No fake confidence
+  percentages — measurable signals only.
+- Embedding input is problem + error + context (the "what happened" side);
+  the solution is deliberately excluded (queries resemble symptoms, not
+  fixes). Capture embeds best-effort; edits to embedded fields regenerate
+  or invalidate (ADR-0013/0015).
+- The eval corpus (`examples/eval_search.rs`) measures quality:
+  hybrid Recall@5 1.00 on paraphrase queries where FTS is structurally 0.
+
 ## Phase 2 store hygiene
 
 - **Deduplication (ADR-0011):** near-identical = same project + same

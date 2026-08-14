@@ -64,3 +64,7 @@ capture time, log `search.run` with `search_duration_ms`.
 - ADR-0010 — zero-network enforcement
 - ADR-0011 — deduplication (deterministic skip, not merge)
 - ADR-0012 — edit command (user fields only)
+- ADR-0013 — embedding model (all-MiniLM-L6-v2 via fastembed, local files)
+- ADR-0014 — vector storage (sqlite-vec vec0, derived index)
+- ADR-0015 — embedding storage & versioning (enrichment layer, rebuild)
+- ADR-0016 — hybrid ranking (reciprocal-rank fusion)

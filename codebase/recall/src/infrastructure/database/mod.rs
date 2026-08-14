@@ -7,6 +7,7 @@
 pub mod fts;
 pub mod migrations;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -14,7 +15,51 @@ use rusqlite::{params, Connection, Row};
 use time::{format_description, macros::format_description, OffsetDateTime};
 
 use crate::domain::memory::{normalize_for_comparison, Memory, MemoryEdits, NewMemory};
+use crate::infrastructure::embeddings::{EMBED_DIMS, MODEL_ID, MODEL_VERSION};
 use crate::{Error, Result};
+
+/// Reciprocal-rank-fusion constant: softens rank differences between the
+/// two engines (ADR-0016).
+const RRF_K: f64 = 60.0;
+/// Weight of the keyword engine's rank contribution.
+const FTS_WEIGHT: f64 = 1.0;
+/// Weight of the semantic engine's rank contribution.
+const SEM_WEIGHT: f64 = 0.9;
+/// Candidate pool per engine before fusion.
+const CANDIDATE_POOL: usize = 50;
+
+/// Register the sqlite-vec extension so every new connection gets `vec0`
+/// (sqlite-vec 0.1.9 loads via `sqlite3_auto_extension`).
+fn register_vec_extension() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        // sqlite-vec declares `sqlite3_vec_init` without the extension-callback
+        // signature, so a transmute into the signature sqlite3_auto_extension
+        // expects is required (same approach as sqlite-vec's own test suite).
+        type InitFn = unsafe extern "C" fn() -> ();
+        type Callback = unsafe extern "C" fn(
+            *mut rusqlite::ffi::sqlite3,
+            *mut *mut std::os::raw::c_char,
+            *const rusqlite::ffi::sqlite3_api_routines,
+        ) -> std::os::raw::c_int;
+        let init: InitFn = sqlite_vec::sqlite3_vec_init;
+        let callback: Callback = std::mem::transmute::<InitFn, Callback>(init);
+        rusqlite::ffi::sqlite3_auto_extension(Some(callback));
+    });
+}
+
+/// A hybrid search result: the memory plus the per-engine signals that
+/// produced its fused rank (ADR-0016 — every score is explainable).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HybridHit {
+    pub memory: Memory,
+    /// Keyword engine rank contribution (RRF of the FTS position).
+    pub fts_rank: Option<f64>,
+    /// Semantic engine: cosine similarity in [0, 1].
+    pub sem_similarity: Option<f64>,
+    /// Combined score; higher is better.
+    pub fused_score: f64,
+}
 
 /// Timestamp storage format: RFC3339 UTC with millisecond precision, so
 /// recency ordering is stable even for captures within the same second.
@@ -32,6 +77,8 @@ pub struct SearchHit {
 /// Handle to the Recall database.
 pub struct Db {
     conn: Connection,
+    /// Whether the sqlite-vec extension loaded and `embeddings_vec` exists.
+    vec_enabled: bool,
 }
 
 impl Db {
@@ -43,6 +90,9 @@ impl Db {
                 std::fs::create_dir_all(parent)?;
             }
         }
+        // MUST run before the connection is created: rusqlite applies
+        // auto-registered extensions only to new connections.
+        register_vec_extension();
         let conn = Connection::open(path)?;
         Self::from_connection(conn, true)
     }
@@ -50,6 +100,7 @@ impl Db {
     /// In-memory database, used by unit tests.
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
+        register_vec_extension();
         let conn = Connection::open_in_memory()?;
         Self::from_connection(conn, false)
     }
@@ -68,7 +119,51 @@ impl Db {
             conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
         }
         migrations::migrate(&mut conn)?;
-        Ok(Self { conn })
+
+        // Semantic layer: enrich when the extension loads, degrade to
+        // FTS-only when it doesn't (ADR-0014).
+        let vec_enabled = Self::setup_vec(&mut conn).unwrap_or(false);
+        Ok(Self { conn, vec_enabled })
+    }
+
+    /// Create the vec0 index table + sync triggers. Returns false when the
+    /// sqlite-vec extension is unavailable — semantic search then stays
+    /// off while keyword search keeps working.
+    fn setup_vec(conn: &mut Connection) -> Result<bool> {
+        register_vec_extension();
+        let version: rusqlite::Result<String> =
+            conn.query_row("SELECT vec_version()", [], |r| r.get(0));
+        if version.is_err() {
+            tracing::warn!(
+                event = "vec.unavailable",
+                reason = "sqlite-vec extension failed to load"
+            );
+            return Ok(false);
+        }
+        let ddl = format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS embeddings_vec USING vec0(
+                 embedding float[{EMBED_DIMS}] distance_metric=cosine
+             );"
+        );
+        conn.execute_batch(&ddl)?;
+        conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS trg_emb_ai AFTER INSERT ON embeddings BEGIN
+                 INSERT INTO embeddings_vec(rowid, embedding) VALUES (new.memory_id, new.vector);
+             END;
+             CREATE TRIGGER IF NOT EXISTS trg_emb_ad AFTER DELETE ON embeddings BEGIN
+                 DELETE FROM embeddings_vec WHERE rowid = old.memory_id;
+             END;
+             CREATE TRIGGER IF NOT EXISTS trg_emb_au AFTER UPDATE ON embeddings BEGIN
+                 DELETE FROM embeddings_vec WHERE rowid = old.memory_id;
+                 INSERT INTO embeddings_vec(rowid, embedding) VALUES (new.memory_id, new.vector);
+             END;",
+        )?;
+        Ok(true)
+    }
+
+    /// Whether the semantic layer is available on this connection.
+    pub fn vec_enabled(&self) -> bool {
+        self.vec_enabled
     }
 
     /// Current schema version (0 when no migrations applied).
@@ -150,6 +245,17 @@ impl Db {
              FROM memories ORDER BY captured_at DESC, id DESC LIMIT ?1",
             params![limit as i64],
         )
+    }
+
+    /// Delete a memory and — via FK cascade and the FTS/vec triggers —
+    /// its keyword and vector index entries. Returns `false` when no
+    /// memory with `id` exists. (Used by tests; retention policies arrive
+    /// in Phase 5.)
+    pub fn delete_memory(&mut self, id: i64) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let changed = tx.execute("DELETE FROM memories WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(changed > 0)
     }
 
     /// Update user-provided fields of an existing memory. Returns `false`
@@ -263,6 +369,211 @@ impl Db {
         }))
     }
 
+    /// Store (or replace) the embedding for a memory. Runs in one
+    /// transaction; the vec0 index follows via triggers. Only the current
+    /// model/version should ever be written here.
+    pub fn insert_embedding(
+        &mut self,
+        memory_id: i64,
+        model: &str,
+        model_version: &str,
+        dims: usize,
+        vector: &[f32],
+    ) -> Result<()> {
+        if !self.vec_enabled {
+            return Err(Error::Embedding(
+                "sqlite-vec is unavailable in this build/connection".into(),
+            ));
+        }
+        if vector.len() != EMBED_DIMS {
+            return Err(Error::Embedding(format!(
+                "vector has {} dimensions, expected {EMBED_DIMS}",
+                vector.len()
+            )));
+        }
+        if vector.iter().any(|x| !x.is_finite()) {
+            return Err(Error::Embedding(
+                "vector contains NaN or infinite values — refusing to store a degenerate vector"
+                    .into(),
+            ));
+        }
+        let blob = to_blob(vector);
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO embeddings (memory_id, model, model_version, dims, vector)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(memory_id) DO UPDATE SET
+                 model = excluded.model,
+                 model_version = excluded.model_version,
+                 dims = excluded.dims,
+                 vector = excluded.vector,
+                 created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+            params![memory_id, model, model_version, dims as i64, blob],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Remove a memory's embedding (metadata row + vec0 index entry).
+    pub fn delete_embedding(&mut self, memory_id: i64) -> Result<()> {
+        if !self.vec_enabled {
+            return Ok(());
+        }
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM embeddings WHERE memory_id = ?1", [memory_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Memory ids whose embedding is missing or was produced by another
+    /// model/version (stale).
+    pub fn embedding_backlog(&self, model: &str, model_version: &str) -> Result<Vec<i64>> {
+        if !self.vec_enabled {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT m.id FROM memories m
+             LEFT JOIN embeddings e ON e.memory_id = m.id
+             WHERE e.memory_id IS NULL OR e.model != ?1 OR e.model_version != ?2
+             ORDER BY m.id",
+        )?;
+        let rows = stmt.query_map(params![model, model_version], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Error::Db)
+    }
+
+    /// (total memories, memories with a current embedding, stale/missing count).
+    pub fn embedding_stats(&self, model: &str, model_version: &str) -> Result<(i64, i64, i64)> {
+        if !self.vec_enabled {
+            return Ok((0, 0, 0));
+        }
+        let total: i64 = self
+            .conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))?;
+        let current: i64 = self.conn.query_row(
+            "SELECT count(*) FROM embeddings WHERE model = ?1 AND model_version = ?2",
+            params![model, model_version],
+            |r| r.get(0),
+        )?;
+        Ok((total, current, total - current))
+    }
+
+    /// k-nearest semantic search over the vec0 index: (memory_id, cosine
+    /// distance). Only embeddings of the given model/version participate.
+    pub fn semantic_search(
+        &self,
+        query_vector: &[f32],
+        k: usize,
+        model: &str,
+        model_version: &str,
+    ) -> Result<Vec<(i64, f64)>> {
+        if !self.vec_enabled {
+            return Ok(Vec::new());
+        }
+        let blob = to_blob(query_vector);
+        // The MATCH must drive the vec0 scan: joining the metadata table in
+        // the same statement lets SQLite reorder the plan on larger tables
+        // and emit NULL `distance` (regression-pinned by tests/semantic_10k.rs).
+        let mut stmt = self.conn.prepare(
+            "SELECT rowid, distance FROM embeddings_vec WHERE embedding MATCH ?1 AND k = ?2",
+        )?;
+        let rows: Vec<(i64, f64)> = stmt
+            .query_map(params![blob, k as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Error::Db)?;
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Keep only embeddings produced by the current model/version.
+        let placeholders = vec!["?"; rows.len()].join(",");
+        let sql = format!(
+            "SELECT memory_id FROM embeddings
+             WHERE memory_id IN ({placeholders}) AND model = ? AND model_version = ?"
+        );
+        let mut params: Vec<rusqlite::types::Value> = rows
+            .iter()
+            .map(|(id, _)| rusqlite::types::Value::Integer(*id))
+            .collect();
+        params.push(rusqlite::types::Value::Text(model.to_string()));
+        params.push(rusqlite::types::Value::Text(model_version.to_string()));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let current: std::collections::HashSet<i64> = stmt
+            .query_map(rusqlite::params_from_iter(params), |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(Error::Db)?;
+
+        Ok(rows
+            .into_iter()
+            .filter(|(id, _)| current.contains(id))
+            .collect())
+    }
+
+    /// Hybrid search (ADR-0016): reciprocal-rank fusion of the FTS5
+    /// keyword candidates and the vec0 semantic candidates. Deterministic:
+    /// same inputs, same order. `query_vector: None` degrades to
+    /// FTS-only (model unavailable or query embedding failed).
+    pub fn hybrid_search(
+        &self,
+        query: &str,
+        query_vector: Option<&[f32]>,
+        limit: usize,
+    ) -> Result<Vec<HybridHit>> {
+        let mut fused: HashMap<i64, HybridHit> = HashMap::new();
+
+        let fts_hits = self.search(query, CANDIDATE_POOL)?;
+        for (pos, hit) in fts_hits.into_iter().enumerate() {
+            let contribution = FTS_WEIGHT / (RRF_K + pos as f64 + 1.0);
+            fused.insert(
+                hit.memory.id,
+                HybridHit {
+                    memory: hit.memory,
+                    fts_rank: Some(contribution),
+                    sem_similarity: None,
+                    fused_score: contribution,
+                },
+            );
+        }
+
+        if let Some(vector) = query_vector {
+            let sem_hits = self.semantic_search(vector, CANDIDATE_POOL, MODEL_ID, MODEL_VERSION)?;
+            for (pos, (memory_id, distance)) in sem_hits.into_iter().enumerate() {
+                let similarity = (1.0 - distance).clamp(0.0, 1.0);
+                let contribution = SEM_WEIGHT / (RRF_K + pos as f64 + 1.0);
+                match fused.get_mut(&memory_id) {
+                    Some(entry) => {
+                        entry.sem_similarity = Some(similarity);
+                        entry.fused_score += contribution;
+                    }
+                    None => {
+                        if let Some(memory) = self.get_memory(memory_id)? {
+                            fused.insert(
+                                memory_id,
+                                HybridHit {
+                                    memory,
+                                    fts_rank: None,
+                                    sem_similarity: Some(similarity),
+                                    fused_score: contribution,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut hits: Vec<HybridHit> = fused.into_values().collect();
+        hits.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.memory.captured_at.cmp(&a.memory.captured_at))
+                .then_with(|| b.memory.id.cmp(&a.memory.id))
+        });
+        hits.truncate(limit);
+        Ok(hits)
+    }
+
     /// Keyword search over the FTS5 index, ranked by weighted bm25
     /// (problem 5.0, solution 3.0, error 5.0, remaining fields 1.0 —
     /// see ADR-005), ties broken by recency.
@@ -295,6 +606,11 @@ impl Db {
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Error::Db)
     }
+}
+
+/// Serialize f32 vector to little-endian bytes (sqlite-vec blob layout).
+pub fn to_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
 fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {

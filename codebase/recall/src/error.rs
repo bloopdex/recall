@@ -31,6 +31,9 @@ pub enum Error {
 
     #[error("search failed: {0}")]
     Search(String),
+
+    #[error("embedding error: {0}")]
+    Embedding(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

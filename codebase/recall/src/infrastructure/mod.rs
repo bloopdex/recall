@@ -4,4 +4,5 @@
 //! layer composes them.
 
 pub mod database;
+pub mod embeddings;
 pub mod git;

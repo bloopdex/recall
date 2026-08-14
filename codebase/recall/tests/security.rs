@@ -35,10 +35,62 @@ fn cargo_manifest_contains_no_network_dependencies() {
     for banned in BANNED_DEPS {
         // Match on the dependency name, not on random words in comments.
         let needle = format!("{banned} =");
-        assert!(
-            !lower.contains(&needle),
-            "banned dependency '{banned}' found in Cargo.toml — Recall must never have a network surface"
-        );
+        if let Some(pos) = lower.find(&needle) {
+            let line = lower[pos..].lines().next().unwrap_or("");
+            // ADR-0013 carve-out: exactly one network crate is allowed —
+            // reqwest — and only behind the opt-in `download` feature
+            // (optional = true), used exclusively by
+            // `recall embeddings download`. Everything else stays banned.
+            assert!(
+                *banned == "reqwest" && line.contains("optional = true"),
+                "banned dependency '{banned}' found in Cargo.toml — only reqwest is allowed, and only behind the opt-in `download` feature"
+            );
+        }
+    }
+    // The feature that gates the network crate must exist and stay
+    // default-off.
+    assert!(
+        lower.contains("download = [\"dep:reqwest\"]"),
+        "the `download` feature must gate the network crate"
+    );
+    assert!(
+        lower.contains("default = []"),
+        "the default feature set must stay network-free"
+    );
+}
+
+/// Source-level zero-network guard: Recall's own modules must never
+/// reference network-crate APIs. The only sanctioned exception is
+/// `infrastructure/embeddings/download.rs`, which uses reqwest behind the
+/// opt-in `download` feature (ADR-0010 amendment / ADR-0013).
+#[test]
+fn recall_source_has_no_network_api_references() {
+    fn collect(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("src readable") {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect(&path, files);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(std::path::Path::new("src"), &mut files);
+    for file in files {
+        let is_download_module = file.to_string_lossy().ends_with("embeddings\\download.rs")
+            || file.to_string_lossy().ends_with("embeddings/download.rs");
+        if is_download_module {
+            continue;
+        }
+        let source = std::fs::read_to_string(&file).unwrap();
+        for needle in ["reqwest", "hyper::", "tokio::", "ureq::", "ureq ", "::ureq"] {
+            assert!(
+                !source.contains(needle),
+                "network API reference '{needle}' found in {} — Recall's own code must have no network paths",
+                file.display()
+            );
+        }
     }
 }
 

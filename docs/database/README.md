@@ -67,3 +67,19 @@ extra git fields are the Phase 1/2 spec extensions (ADR-0004).
 Embedded SQL files (`src/infrastructure/database/sql/NNNN_name.sql`) applied
 in version order, one transaction each, recorded in `schema_migrations`.
 Append-only: never edit an applied migration.
+
+## Semantic layer (Phase 3 — ADR-0014/0015)
+
+- **`embeddings` table** (migration 0002): `memory_id` (PK, FK CASCADE),
+  `model`, `model_version`, `dims`, `vector` (little-endian f32 BLOB),
+  `created_at`. The canonical vector store.
+- **`embeddings_vec`** vec0 virtual table (`float[384]`, cosine distance,
+  rowid = memory_id) — a derived index synced by triggers, created at
+  open when the sqlite-vec extension loads (via `sqlite3_auto_extension`
+  before connection creation).
+- **Query shape:** the MATCH must drive the vec0 scan — metadata filtering
+  happens as a second lookup over the ≤k rowids, because SQLite may
+  reorder a joined plan at scale and emit NULL `distance` (pinned by
+  `tests/semantic_10k.rs`). NaN/Inf vectors are rejected at insert.
+- Extension load failure degrades to keyword-only search (`vec_enabled`
+  false), never a crash.

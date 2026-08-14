@@ -35,7 +35,7 @@ fn reopen_is_idempotent_and_preserves_data() {
     let db = Db::open(&path).unwrap();
     assert_eq!(
         db.schema_version().unwrap(),
-        1,
+        MIGRATIONS.last().unwrap().version,
         "reopen must not re-migrate"
     );
     let memory = db.get_memory(id).unwrap().expect("memory survives reopen");

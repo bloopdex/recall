@@ -39,12 +39,22 @@ pub enum Command {
     /// Edit user-provided fields of an existing memory.
     Edit(EditArgs),
 
-    /// Search past solutions by keyword (SQLite FTS5).
+    /// Search past solutions (hybrid: keyword + semantic).
     Search {
         /// Search terms; e.g. recall search "postgres connection pool".
+        /// Trailing-var-arg: place flags such as --explain BEFORE the query.
         #[arg(trailing_var_arg = true, required = true, value_name = "QUERY")]
         query: Vec<String>,
+
+        /// Show the per-engine ranking signals behind each result
+        /// (put this flag before the query).
+        #[arg(long)]
+        explain: bool,
     },
+
+    /// Manage the semantic-search layer (model + embeddings).
+    #[command(subcommand)]
+    Embeddings(EmbeddingsCommand),
 
     /// List recent memories, newest first.
     List {
@@ -104,6 +114,16 @@ pub struct CaptureArgs {
     /// deduplication skip, see ADR-0011).
     #[arg(long)]
     pub force: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EmbeddingsCommand {
+    /// Show model presence and embedding coverage.
+    Status,
+    /// Embed all memories that are missing or have stale embeddings.
+    Build,
+    /// One-time model download (the only command that uses the network).
+    Download,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -174,12 +194,22 @@ pub fn run() -> anyhow::Result<()> {
             application::edit::run(&mut db, &args)?;
             println!("Edited #{}", args.id);
         }
-        Command::Search { query } => {
-            application::search::run(&db, &query.join(" "), application::search::DEFAULT_LIMIT)?;
+        Command::Search { query, explain } => {
+            application::search::run(
+                &db,
+                &query.join(" "),
+                application::search::DEFAULT_LIMIT,
+                explain,
+            )?;
         }
         Command::List { limit } => {
             application::list::run(&db, limit)?;
         }
+        Command::Embeddings(command) => match command {
+            EmbeddingsCommand::Status => application::embeddings::status(&db)?,
+            EmbeddingsCommand::Build => application::embeddings::build(&mut db)?,
+            EmbeddingsCommand::Download => application::embeddings::download()?,
+        },
     }
     Ok(())
 }

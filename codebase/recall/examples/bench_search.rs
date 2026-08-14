@@ -120,6 +120,79 @@ fn main() {
         );
     }
     println!();
+    // Phase 3: semantic + hybrid latency on the same 10k corpus, using
+    // deterministic synthetic unit vectors (latency is data-driven, not
+    // content-driven; embedding-quality is measured by the eval harness).
+    let dims = recall::infrastructure::embeddings::EMBED_DIMS;
+    let synthetic = |seed: f64| -> Vec<f32> {
+        let mut v = vec![0f32; dims];
+        for (i, x) in v.iter_mut().enumerate() {
+            *x = (seed + i as f64 * 1e-5) as f32;
+        }
+        let l: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        v.iter_mut().for_each(|x| *x /= l);
+        v
+    };
+    let mut rng2 = XorShift(0xfeed_2026_0814);
+    let seed_started = Instant::now();
+    for i in 0..ENTRIES {
+        db.insert_embedding(
+            (i + 1) as i64,
+            recall::infrastructure::embeddings::MODEL_ID,
+            recall::infrastructure::embeddings::MODEL_VERSION,
+            dims,
+            // Small seeds: raw u64 values as f64 would overflow the f32
+            // norm and produce degenerate zero vectors.
+            &synthetic((rng2.next() % 1_000_000) as f64),
+        )
+        .expect("vector insert");
+    }
+    println!("vector seed: {} ms", seed_started.elapsed().as_millis());
+    println!();
+    println!("engine, query, avg_ms, min_ms, max_ms");
+    let query_vec = synthetic(42.0);
+    for query in [
+        "postgres connection pool",
+        "database is locked",
+        "tls handshake timeout",
+    ] {
+        // semantic-only
+        let mut times = Vec::with_capacity(ITERATIONS);
+        for _ in 0..ITERATIONS {
+            let t = Instant::now();
+            db.semantic_search(
+                &query_vec,
+                50,
+                recall::infrastructure::embeddings::MODEL_ID,
+                recall::infrastructure::embeddings::MODEL_VERSION,
+            )
+            .expect("semantic search");
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!(
+            "semantic, \"{query}\", {:.2}, {:.2}, {:.2}",
+            times.iter().sum::<f64>() / ITERATIONS as f64,
+            times[0],
+            times[ITERATIONS - 1]
+        );
+        // hybrid
+        let mut times = Vec::with_capacity(ITERATIONS);
+        for _ in 0..ITERATIONS {
+            let t = Instant::now();
+            db.hybrid_search(query, Some(&query_vec), 20)
+                .expect("hybrid search");
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!(
+            "hybrid,   \"{query}\", {:.2}, {:.2}, {:.2}",
+            times.iter().sum::<f64>() / ITERATIONS as f64,
+            times[0],
+            times[ITERATIONS - 1]
+        );
+    }
+    println!();
     println!(
         "machine: {} / {} logical cpus",
         std::env::consts::OS,

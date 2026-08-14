@@ -16,11 +16,18 @@ pub struct Migration {
 
 /// Ordered, immutable migration list. Append-only: never edit an applied
 /// migration — add a new version instead.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "init",
-    sql: include_str!("sql/0001_init.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "init",
+        sql: include_str!("sql/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "embeddings",
+        sql: include_str!("sql/0002_embeddings.sql"),
+    },
+];
 
 /// Apply all pending migrations to `conn`. Each migration runs in its own
 /// transaction so a failure cannot leave a half-applied schema.
