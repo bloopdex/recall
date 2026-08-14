@@ -27,3 +27,27 @@ with FTS triggers active).
 **Conclusion:** the Phase 1/2 baseline (~3 ms) already sits ~30× under the
 Phase 6 target (<100 ms). Re-measure after Phase 3 adds semantic
 re-ranking; the target is comfortably achievable.
+
+## Capture latency — Phase 2 baseline (recorded 2026-08-14)
+
+Two measurements of the actual capture operation (git detection with
+branch + commit + dirty file, dedup check, transactional insert), Windows
+11 / 16 logical CPUs, release build:
+
+| Measurement | Iterations | Avg | Min | Max | Median |
+|---|---|---|---|---|---|
+| In-process (`examples/bench_capture.rs`) | 50 | **99.3 ms** | 91.3 | 144.5 | 98.7 |
+| Spawned binary (`tests/bench_capture.rs`) | 30 | **117.3 ms** | 111.0 | 130.5 | 116.2 |
+
+Phase 2 target: <100 ms per capture with git context.
+
+**Verdict:** the in-process capture operation sits *at* the 100 ms target
+with no margin (99.3 ms); the end-to-end CLI is above it (117 ms) because
+of Windows process startup (~18 ms) and the four git subprocess calls that
+dominate the profile. No target claim beyond what is measured: the
+operation meets the target marginally on this machine; the CLI does not.
+
+**Optimization leads (Phase 5+):** replace the four git invocations with a
+single `git status --porcelain=v2 --branch` call, cache git detection per
+directory, and skip the `--show-toplevel` call when the cwd is unchanged.
+

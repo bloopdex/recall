@@ -36,6 +36,9 @@ pub enum Command {
     /// Capture a solution memory (interactive, by flags, or piped stdin).
     Capture(Box<CaptureArgs>),
 
+    /// Edit user-provided fields of an existing memory.
+    Edit(EditArgs),
+
     /// Search past solutions by keyword (SQLite FTS5).
     Search {
         /// Search terms; e.g. recall search "postgres connection pool".
@@ -96,6 +99,53 @@ pub struct CaptureArgs {
     /// Read the problem from stdin (instead of interactive prompts).
     #[arg(long)]
     pub stdin: bool,
+
+    /// Capture even when a near-identical memory exists (overrides the
+    /// deduplication skip, see ADR-0011).
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct EditArgs {
+    /// Id of the memory to edit.
+    pub id: i64,
+
+    /// Replace the problem (required field — cannot be cleared).
+    #[arg(long, value_name = "TEXT")]
+    pub problem: Option<String>,
+
+    /// Replace the solution (required field — cannot be cleared).
+    #[arg(long, value_name = "TEXT")]
+    pub solution: Option<String>,
+
+    /// Replace the error text; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub error: Option<String>,
+
+    /// Replace the context; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub context: Option<String>,
+
+    /// Replace the investigation notes; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub investigation: Option<String>,
+
+    /// Replace the root cause; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub root_cause: Option<String>,
+
+    /// Replace the verification notes; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub verification: Option<String>,
+
+    /// Replace the environment metadata; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub environment: Option<String>,
+
+    /// Replace the explanation; empty text clears the field.
+    #[arg(long, value_name = "TEXT")]
+    pub explanation: Option<String>,
 }
 
 /// Parse, resolve configuration, and dispatch.
@@ -111,7 +161,18 @@ pub fn run() -> anyhow::Result<()> {
         Command::Capture(args) => {
             let outcome = application::capture::run(&mut db, args.as_ref(), &cwd)?;
             let project = outcome.project.unwrap_or_else(|| "no project".to_string());
-            println!("Captured #{} (project: {project})", outcome.id);
+            if outcome.skipped {
+                println!(
+                    "Skipped: near-identical memory #{} already exists (project: {project}). Use --force to capture anyway.",
+                    outcome.id
+                );
+            } else {
+                println!("Captured #{} (project: {project})", outcome.id);
+            }
+        }
+        Command::Edit(args) => {
+            application::edit::run(&mut db, &args)?;
+            println!("Edited #{}", args.id);
         }
         Command::Search { query } => {
             application::search::run(&db, &query.join(" "), application::search::DEFAULT_LIMIT)?;

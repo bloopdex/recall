@@ -62,3 +62,5 @@ capture time, log `search.run` with `search_duration_ms`.
 - ADR-0008 — git metadata strategy
 - ADR-0009 — error model
 - ADR-0010 — zero-network enforcement
+- ADR-0011 — deduplication (deterministic skip, not merge)
+- ADR-0012 — edit command (user fields only)

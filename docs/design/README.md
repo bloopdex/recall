@@ -38,9 +38,18 @@ opt-in (Phase 5). Auto-capture never collects environment variables;
 user-typed fields may contain secrets and Phase 6 redaction treats
 `error`/`context`/`investigation` as redactable by contract.
 
+## Phase 2 store hygiene
+
+- **Deduplication (ADR-0011):** near-identical = same project + same
+  normalized problem or error, within 30 days → deterministic skip with a
+  clear message; `--force` captures anyway. Merge was deliberately not
+  implemented — merging texts without judgment would corrupt the record.
+- **Edit (ADR-0012):** `recall edit <id>` updates user-provided fields;
+  empty text clears an optional field; auto-captured metadata is not
+  editable.
+
 ## Deliberate Phase 1/2 scope cuts
 
-- No dedup, no `recall edit` (remain Phase 2 follow-ups)
 - No fuzzy matching, no vector search (Phase 3)
 - No shell hooks / git hooks (Phase 4)
 - No retention policies (Phase 5)

@@ -94,6 +94,69 @@ pub struct Memory {
     pub captured_at: OffsetDateTime,
 }
 
+/// Field edits for an existing memory (`recall edit`).
+///
+/// Semantics per field: `None` = leave untouched; `Some(text)` = set the
+/// field; `Some("")` (whitespace-only) = clear the field — except for the
+/// required `problem`/`solution`, where clearing is rejected by
+/// [`MemoryEdits::validate`]. Automatically captured metadata (project,
+/// git fields, cwd, timestamps) is intentionally not editable here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryEdits {
+    pub problem: Option<String>,
+    pub solution: Option<String>,
+    pub error: Option<String>,
+    pub context: Option<String>,
+    pub investigation: Option<String>,
+    pub root_cause: Option<String>,
+    pub verification: Option<String>,
+    pub environment: Option<String>,
+    pub explanation: Option<String>,
+}
+
+impl MemoryEdits {
+    /// True when no field flag was provided at all.
+    pub fn is_empty(&self) -> bool {
+        self.problem.is_none()
+            && self.solution.is_none()
+            && self.error.is_none()
+            && self.context.is_none()
+            && self.investigation.is_none()
+            && self.root_cause.is_none()
+            && self.verification.is_none()
+            && self.environment.is_none()
+            && self.explanation.is_none()
+    }
+
+    /// Validate: required fields must not be cleared.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(p) = &self.problem {
+            if p.trim().is_empty() {
+                return Err(Error::InvalidInput(
+                    "problem is required and cannot be cleared".into(),
+                ));
+            }
+        }
+        if let Some(s) = &self.solution {
+            if s.trim().is_empty() {
+                return Err(Error::InvalidInput(
+                    "solution is required and cannot be cleared".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Normalize free text for near-identical comparison: lowercase, collapse
+/// all whitespace runs to single spaces, trim. Deterministic and cheap.
+pub fn normalize_for_comparison(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
 impl Memory {
     /// Render `captured_at` in the machine's local time for display.
     pub fn captured_at_local(&self) -> String {
@@ -145,5 +208,54 @@ mod tests {
         assert_eq!(m.solution, "raise limit");
         assert_eq!(m.context, None);
         assert_eq!(m.explanation.as_deref(), Some("detail"));
+    }
+
+    #[test]
+    fn edits_empty_until_a_field_is_given() {
+        assert!(MemoryEdits::default().is_empty());
+        assert!(!MemoryEdits {
+            solution: Some("x".into()),
+            ..Default::default()
+        }
+        .is_empty());
+    }
+
+    #[test]
+    fn edits_cannot_clear_required_fields() {
+        assert!(matches!(
+            MemoryEdits {
+                problem: Some("".into()),
+                ..Default::default()
+            }
+            .validate(),
+            Err(Error::InvalidInput(_))
+        ));
+        assert!(matches!(
+            MemoryEdits {
+                solution: Some("   ".into()),
+                ..Default::default()
+            }
+            .validate(),
+            Err(Error::InvalidInput(_))
+        ));
+        // Clearing an optional field is fine.
+        assert!(MemoryEdits {
+            error: Some("".into()),
+            ..Default::default()
+        }
+        .validate()
+        .is_ok());
+    }
+
+    #[test]
+    fn normalization_is_case_and_whitespace_insensitive() {
+        assert_eq!(
+            normalize_for_comparison("PostgreSQL connection pool\n\texhausted"),
+            normalize_for_comparison("  postgresql CONNECTION pool exhausted ")
+        );
+        assert_ne!(
+            normalize_for_comparison("connection pool exhausted"),
+            normalize_for_comparison("connection pool leaking")
+        );
     }
 }

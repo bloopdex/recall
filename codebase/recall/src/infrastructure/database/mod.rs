@@ -13,7 +13,7 @@ use std::time::Duration;
 use rusqlite::{params, Connection, Row};
 use time::{format_description, macros::format_description, OffsetDateTime};
 
-use crate::domain::memory::{Memory, NewMemory};
+use crate::domain::memory::{normalize_for_comparison, Memory, MemoryEdits, NewMemory};
 use crate::{Error, Result};
 
 /// Timestamp storage format: RFC3339 UTC with millisecond precision, so
@@ -150,6 +150,117 @@ impl Db {
              FROM memories ORDER BY captured_at DESC, id DESC LIMIT ?1",
             params![limit as i64],
         )
+    }
+
+    /// Update user-provided fields of an existing memory. Returns `false`
+    /// when no memory with `id` exists. FTS5 stays synchronized via the
+    /// schema's UPDATE trigger; the change is transactional.
+    pub fn update_memory(&mut self, id: i64, edits: &MemoryEdits) -> Result<bool> {
+        let mut parts: Vec<String> = Vec::new();
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+
+        // Column names are compile-time constants — only the values are
+        // parameterized, so this dynamic SET clause is injection-safe.
+        let set_field = |parts: &mut Vec<String>,
+                         values: &mut Vec<rusqlite::types::Value>,
+                         col: &str,
+                         value: &Option<String>| {
+            let n = values.len() + 1;
+            parts.push(format!("{col} = ?{n}"));
+            match value {
+                Some(v) if !v.trim().is_empty() => {
+                    values.push(rusqlite::types::Value::Text(v.trim().to_string()));
+                }
+                // Empty text means "clear the field".
+                _ => values.push(rusqlite::types::Value::Null),
+            }
+        };
+        for (col, value) in [
+            ("problem", &edits.problem),
+            ("solution", &edits.solution),
+            ("error", &edits.error),
+            ("context", &edits.context),
+            ("investigation", &edits.investigation),
+            ("root_cause", &edits.root_cause),
+            ("verification", &edits.verification),
+            ("environment", &edits.environment),
+            ("explanation", &edits.explanation),
+        ] {
+            if value.is_some() {
+                set_field(&mut parts, &mut values, col, value);
+            }
+        }
+        debug_assert!(
+            !parts.is_empty(),
+            "update_memory requires at least one edit"
+        );
+
+        let id_placeholder = values.len() + 1;
+        let sql = format!(
+            "UPDATE memories SET {}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?{id_placeholder}",
+            parts.join(", ")
+        );
+        values.push(rusqlite::types::Value::Integer(id));
+
+        let tx = self.conn.transaction()?;
+        let changed = tx.execute(
+            &sql,
+            rusqlite::params_from_iter(values.iter().map(|v| v as &dyn rusqlite::ToSql)),
+        )?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// Find a near-identical memory (ADR-0011): same project, captured
+    /// within `within_days`, and sharing either the normalized problem
+    /// text or the normalized error text. Deterministic — no scoring.
+    pub fn find_near_identical(
+        &self,
+        memory: &NewMemory,
+        within_days: i64,
+    ) -> Result<Option<Memory>> {
+        let cutoff = (OffsetDateTime::now_utc() - time::Duration::days(within_days))
+            .format(CAPTURED_AT_FMT)
+            .map_err(|e| Error::Time(format!("cannot format cutoff timestamp: {e}")))?;
+
+        let problem_norm = normalize_for_comparison(&memory.problem);
+        let error_norm = memory.error.as_deref().map(normalize_for_comparison);
+
+        // Candidate set: recent memories in the same project (NULL-safe).
+        let candidates = match &memory.project {
+            Some(project) => self.query_memories(
+                "SELECT id, problem, solution, error, context, investigation, root_cause,
+                        verification, environment, explanation, project, repo_path,
+                        git_branch, git_commit, git_changed_files, cwd, captured_at
+                 FROM memories
+                 WHERE project = ?1 AND captured_at >= ?2
+                 ORDER BY captured_at DESC, id DESC
+                 LIMIT 20",
+                params![project, cutoff],
+            )?,
+            None => self.query_memories(
+                "SELECT id, problem, solution, error, context, investigation, root_cause,
+                        verification, environment, explanation, project, repo_path,
+                        git_branch, git_commit, git_changed_files, cwd, captured_at
+                 FROM memories
+                 WHERE project IS NULL AND captured_at >= ?1
+                 ORDER BY captured_at DESC, id DESC
+                 LIMIT 20",
+                params![cutoff],
+            )?,
+        };
+
+        Ok(candidates.into_iter().find(|candidate| {
+            let same_problem = normalize_for_comparison(&candidate.problem) == problem_norm;
+            let same_error = match &error_norm {
+                Some(norm) => candidate
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| normalize_for_comparison(e) == *norm),
+                None => false,
+            };
+            same_problem || same_error
+        }))
     }
 
     /// Keyword search over the FTS5 index, ranked by weighted bm25

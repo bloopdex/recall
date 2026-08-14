@@ -27,6 +27,13 @@ recall capture --problem "sqlite database is locked" --solution "set busy_timeou
 # Capture from a pipe
 echo "TLS handshake timeout" | recall capture --solution "reused the connection pool"
 
+# Near-identical re-capture is skipped deterministically (30-day window);
+# override with --force
+recall capture --problem "sqlite database is locked" --solution "..." --force
+
+# Fix or clarify an existing memory (user fields only; FTS stays in sync)
+recall edit 42 --solution "set busy_timeout 5000" --error ""   # empty clears
+
 # Search past solutions (SQLite FTS5 keyword search)
 recall search "postgres connection pool"
 
@@ -37,6 +44,7 @@ recall list --limit 20
 ## How it works
 
 - **Capture first, enrich later.** Only the problem and solution are required. Project name, git branch/commit, changed files, and the working directory are captured automatically (best-effort — capture still works outside git).
+- **Deduplication, deterministically.** A near-identical capture (same project + same normalized problem or error, within 30 days) is skipped with a clear message; `--force` overrides (ADR-0011).
 - **Keyword search via SQLite FTS5.** Problem and error fields are weighted higher than background text; ties break by recency. Semantic/vector search arrives in Phase 3.
 - **Local-first.** The database lives at `%LOCALAPPDATA%\recall\recall.db` (Windows) or `~/.local/share/recall/recall.db` (Linux/macOS). Override with `--db <path>` or `RECALL_DB_PATH`.
 

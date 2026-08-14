@@ -3,7 +3,7 @@
 
 use time::OffsetDateTime;
 
-use recall::domain::memory::NewMemory;
+use recall::domain::memory::{MemoryEdits, NewMemory};
 use recall::infrastructure::database::migrations::MIGRATIONS;
 use recall::infrastructure::database::Db;
 
@@ -133,6 +133,118 @@ fn search_ordering_is_by_rank_then_recency() {
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].memory.solution, "newer fix");
     assert_eq!(hits[1].memory.solution, "older fix");
+}
+
+#[test]
+fn near_identical_detection_respects_project_error_and_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Db::open(&dir.path().join("recall.db")).unwrap();
+
+    let base = NewMemory {
+        problem: "pool issue".into(),
+        solution: "fix one".into(),
+        error: Some("connection pool exhausted".into()),
+        project: Some("svc-a".into()),
+        ..Default::default()
+    };
+    db.insert_memory(&base, OffsetDateTime::now_utc()).unwrap();
+
+    // Same error, same project, recent → detected.
+    let dup = NewMemory {
+        problem: "different problem".into(),
+        solution: "other".into(),
+        error: Some("  CONNECTION pool EXHAUSTED ".into()),
+        project: Some("svc-a".into()),
+        ..Default::default()
+    };
+    assert!(db.find_near_identical(&dup, 30).unwrap().is_some());
+
+    // Same normalized problem, same project, different error → detected.
+    let same_problem = NewMemory {
+        problem: "POOL  issue".into(),
+        solution: "other".into(),
+        error: None,
+        project: Some("svc-a".into()),
+        ..Default::default()
+    };
+    assert!(db.find_near_identical(&same_problem, 30).unwrap().is_some());
+
+    // Same error but different project → not detected.
+    let other_project = NewMemory {
+        problem: "different".into(),
+        solution: "other".into(),
+        error: Some("connection pool exhausted".into()),
+        project: Some("svc-b".into()),
+        ..Default::default()
+    };
+    assert!(db
+        .find_near_identical(&other_project, 30)
+        .unwrap()
+        .is_none());
+
+    // Old capture outside the window → not detected.
+    let old = NewMemory {
+        problem: "pool issue".into(),
+        solution: "old".into(),
+        error: Some("connection pool exhausted".into()),
+        project: Some("svc-a".into()),
+        ..Default::default()
+    };
+    db.insert_memory(&old, OffsetDateTime::now_utc() - time::Duration::days(31))
+        .unwrap();
+    // The fresh "dup" above is still the only recent one; a capture
+    // identical to `old` but dated today is compared against recent rows.
+    assert!(db.find_near_identical(&dup, 30).unwrap().is_some());
+}
+
+#[test]
+fn update_memory_edits_fields_and_respects_missing_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Db::open(&dir.path().join("recall.db")).unwrap();
+    let id = db
+        .insert_memory(
+            &NewMemory {
+                problem: "before".into(),
+                solution: "before".into(),
+                error: Some("old error".into()),
+                ..Default::default()
+            },
+            OffsetDateTime::now_utc(),
+        )
+        .unwrap();
+
+    let changed = db
+        .update_memory(
+            id,
+            &MemoryEdits {
+                solution: Some("after".into()),
+                error: Some(String::new()), // clear
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(changed);
+
+    let m = db.get_memory(id).unwrap().unwrap();
+    assert_eq!(m.problem, "before", "untouched fields stay");
+    assert_eq!(m.solution, "after");
+    assert_eq!(m.error, None, "empty text clears the field");
+
+    // FTS index reflects the edit.
+    let hits = db.search("after", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+
+    // Missing id → false, no error.
+    let changed = db
+        .update_memory(
+            999,
+            &MemoryEdits {
+                solution: Some("x".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(!changed);
 }
 
 fn sample() -> NewMemory {

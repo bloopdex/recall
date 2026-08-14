@@ -38,8 +38,12 @@ All tests use temp directories/databases; none depend on personal repo state.
 
 ## Benchmarks
 
-See [benchmarks.md](benchmarks.md). The target for Phase 6 is keyword search
-across 10,000 entries in <100ms; Phase 1/2 establishes the baseline.
+See [benchmarks.md](benchmarks.md).
+
+- Search: `cargo run --release --example bench_search` (10k-entry FTS5
+  baseline; Phase 6 target <100 ms).
+- Capture (in-process): `cargo run --release --example bench_capture`.
+- Capture (end-to-end binary): `cargo test --release --test bench_capture -- --ignored --nocapture`.
 
 ## Zero-network guarantee
 

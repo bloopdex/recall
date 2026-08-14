@@ -96,6 +96,232 @@ fn multi_line_stdin_capture_preserves_all_lines() {
 }
 
 #[test]
+fn duplicate_capture_is_skipped_and_force_overrides() {
+    let (_dir, db) = temp_db_path();
+    let flags = [
+        "capture",
+        "--problem",
+        "sqlite database is locked",
+        "--solution",
+        "busy_timeout",
+        "--project",
+        "recall",
+    ];
+    let first = run(&db, None, &flags, None);
+    assert!(first.status.success());
+    assert!(stdout(&first).contains("Captured #1"));
+
+    // Identical re-capture: deterministic skip, exit 0, store unchanged.
+    let second = run(&db, None, &flags, None);
+    assert!(
+        second.status.success(),
+        "dedup skip must exit 0: {}",
+        stderr(&second)
+    );
+    let text = stdout(&second);
+    assert!(text.contains("Skipped"), "expected skip message: {text}");
+    assert!(
+        text.contains("--force"),
+        "skip message must mention --force: {text}"
+    );
+
+    // --force stores a second copy.
+    let third = run(
+        &db,
+        None,
+        &[
+            "capture",
+            "--problem",
+            "sqlite database is locked",
+            "--solution",
+            "busy_timeout",
+            "--project",
+            "recall",
+            "--force",
+        ],
+        None,
+    );
+    assert!(third.status.success());
+    assert!(
+        stdout(&third).contains("Captured #2"),
+        "unexpected: {}",
+        stdout(&third)
+    );
+
+    // The store now contains two memories; `list` shows the problems only,
+    // so count via a search that matches both.
+    let list = run(&db, None, &["list"], None);
+    let list = stdout(&list);
+    assert!(
+        list.contains("#2 "),
+        "second entry expected in list: {list}"
+    );
+    let hits = run(&db, None, &["search", "database locked"], None);
+    let hits = stdout(&hits);
+    assert_eq!(
+        hits.matches("busy_timeout").count(),
+        2,
+        "two search hits expected: {hits}"
+    );
+}
+
+#[test]
+fn dedup_is_scoped_to_project_and_window() {
+    let (_dir, db) = temp_db_path();
+    // Same error, different project → both captured.
+    let a = run(
+        &db,
+        None,
+        &[
+            "capture",
+            "--problem",
+            "p",
+            "--solution",
+            "s",
+            "--error",
+            "same error text",
+            "--project",
+            "project-a",
+        ],
+        None,
+    );
+    assert!(a.status.success());
+    let b = run(
+        &db,
+        None,
+        &[
+            "capture",
+            "--problem",
+            "p",
+            "--solution",
+            "s",
+            "--error",
+            "same error text",
+            "--project",
+            "project-b",
+        ],
+        None,
+    );
+    assert!(b.status.success());
+    assert!(
+        stdout(&b).contains("Captured #2"),
+        "different project must not dedup: {}",
+        stdout(&b)
+    );
+
+    // Same problem (normalized) in the same project → skipped.
+    let c = run(
+        &db,
+        None,
+        &[
+            "capture",
+            "--problem",
+            "P",
+            "--solution",
+            "s",
+            "--project",
+            "project-a",
+        ],
+        None,
+    );
+    assert!(c.status.success());
+    assert!(
+        stdout(&c).contains("Skipped"),
+        "same normalized problem must dedup: {}",
+        stdout(&c)
+    );
+}
+
+#[test]
+fn edit_updates_solution_and_fts_index() {
+    let (_dir, db) = temp_db_path();
+    run(
+        &db,
+        None,
+        &[
+            "capture",
+            "--problem",
+            "postgres pool exhausted",
+            "--solution",
+            "old fix",
+            "--error",
+            "too many clients",
+        ],
+        None,
+    );
+
+    let out = run(
+        &db,
+        None,
+        &["edit", "1", "--solution", "raise the pool limit"],
+        None,
+    );
+    assert!(out.status.success(), "edit failed: {}", stderr(&out));
+    assert!(stdout(&out).contains("Edited #1"));
+
+    let search = run(&db, None, &["search", "postgres pool"], None);
+    let text = stdout(&search);
+    assert!(
+        text.contains("raise the pool limit"),
+        "edited solution must be found: {text}"
+    );
+    assert!(
+        !text.contains("old fix"),
+        "old solution must leave the FTS index: {text}"
+    );
+}
+
+#[test]
+fn edit_can_clear_optional_field() {
+    let (_dir, db) = temp_db_path();
+    run(
+        &db,
+        None,
+        &[
+            "capture",
+            "--problem",
+            "flakey ci",
+            "--solution",
+            "pin the action",
+            "--error",
+            "npm network timeout",
+        ],
+        None,
+    );
+    let out = run(&db, None, &["edit", "1", "--error", ""], None);
+    assert!(out.status.success(), "edit failed: {}", stderr(&out));
+    let search = run(&db, None, &["search", "npm network timeout"], None);
+    assert!(
+        stdout(&search).contains("No results"),
+        "cleared error must leave the FTS index: {}",
+        stdout(&search)
+    );
+}
+
+#[test]
+fn edit_missing_id_and_missing_flags_fail_cleanly() {
+    let (_dir, db) = temp_db_path();
+    run(
+        &db,
+        None,
+        &["capture", "--problem", "p", "--solution", "s"],
+        None,
+    );
+
+    let out = run(&db, None, &["edit", "999", "--solution", "x"], None);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("no memory with id 999"));
+
+    let out = run(&db, None, &["edit", "1"], None);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("at least one field"));
+
+    let out = run(&db, None, &["edit", "1", "--problem", ""], None);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("cannot be cleared"));
+}
+
+#[test]
 fn explicit_stdin_flag_also_works() {
     let (_dir, db) = temp_db_path();
     let out = run(
