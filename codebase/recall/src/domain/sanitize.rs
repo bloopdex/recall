@@ -64,7 +64,7 @@ const SECRET_FLAGS: &[&str] = &[
     "client-secret",
 ];
 
-/// Well-known hosted-token prefixes (Phase 6, ADR-0018 amendment).
+/// Well-known hosted-token prefixes (ADR-0018 amendment).
 /// Matching is case-sensitive — these prefixes are lowercase by
 /// convention, and case-sensitivity keeps false positives down. A token
 /// must have at least [`MIN_TOKEN_LEN`] characters after the prefix, so a
@@ -98,7 +98,7 @@ fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
 
-/// A word boundary is whitespace or one of these delimiters. Phase 6
+/// A word boundary is whitespace or one of these delimiters. The
 /// additions (`)`, `]`, `}`, `{`, `:`, `.`, `!`, `?`) let tokens at the
 /// end of sentences, in parens, or in `url:token` positions be detected.
 fn is_boundary(c: char) -> bool {
@@ -581,7 +581,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Phase 6 additions (ADR-0018 amendment)
+    // Hosted-token additions (ADR-0018 amendment)
     // -------------------------------------------------------------------
 
     #[test]

@@ -36,7 +36,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 powershell -File ../scripts/check_no_network.ps1   # optional manual gate
 ```
 
-Performance changes: run `cargo run --release --example bench_phase6`
+Performance changes: run `cargo run --release --example bench_scale`
 before and after, and record the numbers in
 `docs/development/benchmarks.md` (ADR-0025: measure → fix → measure).
 

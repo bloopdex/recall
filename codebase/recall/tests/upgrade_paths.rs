@@ -1,12 +1,12 @@
-//! Release upgrade paths (Phase 7, ADR-0031).
+//! Release upgrade paths (ADR-0031).
 //!
-//! The compatibility contract for users upgrading from earlier phases:
+//! The compatibility contract for users upgrading from earlier releases:
 //! - database schema upgrades are covered by the migration suite
 //!   (v1→v3, v2→v3, failure atomicity, backup restore — see
 //!   src/infrastructure/database/migrations.rs);
 //! - export files from any released version remain importable (format
-//!   versioning, ADR-0024) — pinned here with a committed Phase 5-era
-//!   export fixture;
+//!   versioning, ADR-0024) — pinned here with a committed
+//!   pre-release export fixture;
 //! - archived memories and their status survive upgrades (migration
 //!   tests + the fixture import below).
 
@@ -32,10 +32,10 @@ fn run(db: &Path, args: &[&str]) -> Output {
 }
 
 #[test]
-fn a_phase5_era_export_imports_losslessly_into_a_fresh_database() {
+fn a_pre_release_export_imports_losslessly_into_a_fresh_database() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("recall.db");
-    let fixture = repo_root().join("fixtures/upgrade/phase5-export.json");
+    let fixture = repo_root().join("fixtures/upgrade/pre-release-export.json");
     assert!(fixture.exists(), "the upgrade fixture must be committed");
 
     let out = run(&db, &["import", fixture.to_str().unwrap()]);
@@ -119,16 +119,16 @@ fn upgrading_a_v1_database_twice_in_a_row_is_idempotent() {
 fn export_format_version_one_remains_the_read_contract() {
     // The export format version is the compatibility line: imports reject
     // future format versions (ADR-0024). This pins that the fixture —
-    // and every Phase 5/6 export — stays readable at format_version 1.
+    // and every earlier export — stays readable at format_version 1.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("recall.db");
-    let fixture = repo_root().join("fixtures/upgrade/phase5-export.json");
+    let fixture = repo_root().join("fixtures/upgrade/pre-release-export.json");
     let raw = std::fs::read_to_string(&fixture).unwrap();
     let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(json["format_version"], 1);
     assert_eq!(
         json["recall_schema_version"], 3,
-        "the fixture represents the Phase 5-era schema"
+        "the fixture represents the pre-release schema"
     );
 
     let out = run(&db, &["import", fixture.to_str().unwrap()]);

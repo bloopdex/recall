@@ -1,7 +1,6 @@
 # Recall — Design
 
-Design-level notes that connect the Phase 0 research (Logseq:
-`Recall / Phase 0 - Data Model & UX Research`) to the implementation.
+Design-level notes and rationale behind the capture/search UX.
 
 ## Capture UX
 
@@ -27,18 +26,17 @@ Captured #1 (project: recall)
 `recall search "postgres connection pool"` returns ranked results showing
 rank, capture time (local), project, commit, error line, problem, and
 solution — enough to judge usefulness at a glance. No results: a clear
-one-line message, exit code 0. Semantic ranking and confidence scores are
-Phase 3.
+one-line message, exit code 0.
 
 ## Privacy position
 
 Recall is engineering incident memory — **not** a generic knowledge base,
 not a team wiki, not cloud-synced. Everything stays on disk; export is
-opt-in (Phase 5). Auto-capture never collects environment variables;
-user-typed fields may contain secrets and Phase 6 redaction treats
+opt-in. Auto-capture never collects environment variables; user-typed
+fields may contain secrets and the redaction layer treats
 `error`/`context`/`investigation` as redactable by contract.
 
-## Semantic search (Phase 3)
+## Semantic search
 
 - `recall search "<query>"` is hybrid: FTS5 candidates + vec0 candidates
   fused by reciprocal-rank fusion (ADR-0016), deterministic and
@@ -51,7 +49,7 @@ user-typed fields may contain secrets and Phase 6 redaction treats
 - The eval corpus (`examples/eval_search.rs`) measures quality:
   hybrid Recall@5 1.00 on paraphrase queries where FTS is structurally 0.
 
-## Phase 2 store hygiene
+## Store hygiene
 
 - **Deduplication (ADR-0011):** near-identical = same project + same
   normalized problem or error, within 30 days → deterministic skip with a
@@ -61,8 +59,10 @@ user-typed fields may contain secrets and Phase 6 redaction treats
   empty text clears an optional field; auto-captured metadata is not
   editable.
 
-## Deliberate Phase 1/2 scope cuts
+## Deliberate non-features
 
-- No fuzzy matching, no vector search (Phase 3)
-- No shell hooks / git hooks (Phase 4)
-- No retention policies (Phase 5)
+- No fuzzy/typo-tolerant matching (a possible future direction)
+- No automatic retention — archive/delete are explicit actions
+  (ADR-0023)
+- No confidence percentages — measurable, explainable ranking signals
+  only (ADR-0016)

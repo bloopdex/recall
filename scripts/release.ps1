@@ -11,9 +11,12 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 1.0.0
 #
-# Publication (uploading the bundle to a release host) is deliberately NOT
-# part of this script - the hosting decision is open (SOT open decision
-# #3). The bundle directory IS the release artifact.
+# Publication (attaching the bundle to a GitHub Release) is deliberately
+# NOT part of this script. `dist/` is gitignored: the bundle is generated
+# locally and attached to the GitHub Release for the tag — generated
+# artifacts are never committed (docs/release/RELEASE-CHECKLIST.md).
+# Publication is currently pending a hosting decision; until then the
+# generated bundle directory IS the release artifact.
 #
 # For Linux/macOS, build on the target OS: `cargo build --release` then
 # copy `target/release/recall` + `scripts/install.sh` into the bundle and
@@ -67,4 +70,5 @@ Write-Host "Next steps (docs/release/RELEASE-CHECKLIST.md):"
 Write-Host "  - run the full validation suite"
 Write-Host "  - test install.ps1 against this bundle"
 Write-Host "  - tag: git tag v$Version"
-Write-Host "  - publish (pending the hosting decision - SOT open decision #3)"
+Write-Host "  - create the GitHub Release and attach these bundle files"
+Write-Host "    (publication is pending a hosting decision - dist/ stays uncommitted)"

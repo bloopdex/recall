@@ -123,7 +123,7 @@ pub struct Memory {
     pub cwd: Option<String>,
     /// Capture time, stored as UTC, rendered in local time on display.
     pub captured_at: OffsetDateTime,
-    /// Lifecycle state (Phase 5, migration 0003).
+    /// Lifecycle state (migration 0003).
     pub status: MemoryStatus,
 }
 

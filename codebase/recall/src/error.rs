@@ -15,7 +15,7 @@ pub enum Error {
     Db(#[from] rusqlite::Error),
 
     /// The file at the configured path is not a readable Recall database
-    /// (Phase 6). The message carries the recovery model: restore the
+    /// (ADR-0027). The message carries the recovery model: restore the
     /// pre-migration backup or re-import from a Recall export. Recall
     /// never modifies the damaged file.
     #[error(

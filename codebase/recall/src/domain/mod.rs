@@ -1,7 +1,7 @@
-//! Domain model — the canonical entry model from Phase 0, with the
-//! optional-field extensions from the Phase 1/2 specification.
+//! Domain model — the canonical entry model (see docs/design/README.md),
+//! with the optional-field extensions added later in development.
 //!
-//! Mapping of the Phase 0 nine fields (see docs/design/README.md):
+//! Mapping of the canonical nine fields (see docs/design/README.md):
 //! Error → `error`, Context → `context`, Commands/Relevant files →
 //! `investigation`, Git commit → `git_commit`, Solution → `solution`,
 //! Project → `project`, Timestamp → `captured_at`, Optional explanation →

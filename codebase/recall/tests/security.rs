@@ -114,7 +114,7 @@ fn capture_does_not_auto_collect_environment_variables() {
     );
 }
 
-/// Full transitive-tree scan (Phase 6): the manifest check above only sees
+/// Full transitive-tree scan: the manifest check above only sees
 /// direct dependencies. This test scans the whole `cargo tree`, so a
 /// network crate can never enter behind a renamed or indirect dependency
 /// either. Sanctioned paths (ADR-0010 amendment 2 / ADR-0013):
@@ -190,7 +190,7 @@ fn full_dependency_tree_contains_no_network_crates() {
     }
 }
 
-/// Phase 7 (ADR-0030): `infrastructure/ci.rs` may read ONLY the
+/// ADR-0030: `infrastructure/ci.rs` may read ONLY the
 /// whitelisted GitHub Actions variables below — never arbitrary CI
 /// environment (which routinely contains tokens and cloud credentials).
 #[test]
@@ -216,12 +216,12 @@ fn ci_integration_reads_only_whitelisted_environment_variables() {
         let name = rest.split('"').next().unwrap_or("");
         assert!(
             ALLOWED.contains(&name),
-            "ci.rs reads environment variable '{name}' outside the Phase 7 whitelist"
+            "ci.rs reads environment variable '{name}' outside the ADR-0030 whitelist"
         );
     }
 }
 
-/// ADR-0010 amendment (Phase 4): the ONLY module allowed to read
+/// ADR-0010 amendment: the ONLY module allowed to read
 /// environment variables is `infrastructure/shell.rs`, and it may read
 /// exactly the whitelist below — the three snapshot variables written by
 /// Recall's own prompt hook, plus the home/shell-location variables needed
@@ -246,7 +246,7 @@ fn shell_integration_reads_only_whitelisted_environment_variables() {
         let name = rest.split('"').next().unwrap_or("");
         assert!(
             ALLOWED.contains(&name),
-            "shell.rs reads environment variable '{name}' outside the Phase 4 whitelist"
+            "shell.rs reads environment variable '{name}' outside the ADR-0010 whitelist"
         );
     }
 }

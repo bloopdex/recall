@@ -101,8 +101,7 @@ names the remediation — see [docs/ci/github-actions.md](docs/ci/github-actions
 ## Installation
 
 Release bundles contain the binary, checksums, and the install scripts
-(see [docs/release/RELEASE-CHECKLIST.md](docs/release/RELEASE-CHECKLIST.md)
-and the Source of Truth for the current release state):
+(see [docs/release/RELEASE-CHECKLIST.md](docs/release/RELEASE-CHECKLIST.md)):
 
 ```powershell
 # Windows: from a release bundle directory (checksums verified)
@@ -157,7 +156,7 @@ codebase/recall/       the Rust crate (lib + bin)
   src/                 cli / application / domain / infrastructure (database, git, shell, ci)
   migrations (sql)     embedded SQLite migrations
   tests/               CLI, database, git, failure, security, concurrency, crash, upgrade tests
-  examples/            bench_search / bench_projects / bench_phase6 (repeatable baselines)
+  examples/            bench_search / bench_projects / bench_scale (repeatable baselines)
 scripts/               install scripts, release bundle script, benchmark + zero-network guard
 fixtures/              example entries + upgrade fixtures (old-export compatibility)
 .github/workflows/     CI (Windows + Linux: fmt, clippy, tests, download build, release build)
@@ -199,12 +198,12 @@ See [docs/development/README.md](docs/development/README.md) for the full workfl
 ## Security model
 
 What is encrypted, what is redacted, what never leaves the machine
-(Phase 6 documentation TODO, ADR-0026/0018/0010/0027):
+(ADR-0026/0018/0010/0027):
 
 - **Encryption at rest: rejected, deliberately.** Recall keeps a
   plaintext SQLite database protected by OS account permissions.
-  Researched in Phase 6 (SQLCipher, SEE, OS keychains, passphrases,
-  field-level encryption): every option either broke the zero-friction
+  Researched (SQLCipher, SEE, OS keychains, passphrases, field-level
+  encryption): every option either broke the zero-friction
   hook flows (passphrase prompts in non-interactive git hooks), gave
   protection no stronger than the OS account (key files next to the
   database), or forked the storage engine away from inspectable plain
@@ -240,18 +239,15 @@ What is encrypted, what is redacted, what never leaves the machine
   invariants (no orphan embeddings, vec0 sync, valid lifecycle
   statuses) — read-only, scriptable exit code.
 
-## Roadmap
+## Status
 
-| Phase | Status | What |
-|---|---|---|
-| 0 — Data Model & UX Research | done | Entry schema, CLI surface, privacy design |
-| 1 — Core Foundation | done | Rust project, SQLite + migrations, FTS5, error model, logging |
-| 2 — Capture MVP | done | `recall capture` (interactive/flags/stdin), `recall search`, `recall list` |
-| 3 — Semantic Search | done | Local embeddings (MiniLM via fastembed), sqlite-vec, hybrid RRF search, eval harness |
-| 4 — Shell & Git Integration | done | Prompt-hook failure capture (PowerShell/Bash), post-commit git hook, secret redaction |
-| 5 — Projects & Lifecycle | done | Project-aware search + `recall projects`, archive/unarchive/delete, portable JSON export/import, pre-migration backup |
-| 6 — Hardening | done | Benchmarks at 10k/50k/100k (percentiles), concurrency + crash/recovery suites, migration hardening, `recall check`, secret-pattern review, encryption-at-rest decision (rejected, ADR-0026), CI zero-network guard |
-| 7 — Ecosystem & Release | done | v1.0.0: `--from-ci` failure capture (opt-in, fail-closed), `recall version`, install scripts + checksums, release bundle + checklist, upgrade fixtures; DeployScore feed deferred — no interface exists yet (ADR-0029) |
+v1.0.0 is released and feature-complete: capture (interactive, flags,
+stdin, shell, git, CI), hybrid keyword + semantic search, projects and
+lifecycle management, portable export/import, integrity checks, and
+hardening (concurrency, crash recovery, secret redaction, zero network).
+The two deliberate deferrals — encryption at rest (ADR-0026) and the
+DeployScore incident feed (ADR-0029) — are recorded with revisit
+conditions.
 
 ## License
 

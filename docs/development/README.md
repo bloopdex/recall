@@ -42,6 +42,8 @@ See [benchmarks.md](benchmarks.md).
 
 - Search: `cargo run --release --example bench_search` (10k-entry FTS5,
   semantic, and hybrid baselines).
+- Full-scale: `cargo run --release --example bench_scale -- [size]`
+  (every operation at 10k/50k/100k with percentile distributions).
 - Capture (in-process): `cargo run --release --example bench_capture`.
 - Capture (end-to-end binary): `cargo test --release --test bench_capture -- --ignored --nocapture`.
 - Embedding latency: `cargo run --release --example bench_embed`.
@@ -66,8 +68,11 @@ Versioning (ADR-0031): SemVer for the app (`recall version` shows the
 four independent surfaces — app, database schema, export format,
 embedding model). The reproducible release procedure is
 [docs/release/RELEASE-CHECKLIST.md](../release/RELEASE-CHECKLIST.md);
-the bundle script is `scripts/release.ps1 -Version <version>`. CI
-integration behavior is pinned by `tests/ci_capture.rs` and documented
-in [docs/ci/github-actions.md](../ci/github-actions.md); upgrade
+the bundle script is `scripts/release.ps1 -Version <version>`. The
+script generates the bundle into `dist/`, which is gitignored —
+generated release artifacts are attached to the GitHub Release, never
+committed to the repository. CI integration behavior is pinned by
+`tests/ci_capture.rs` and documented in
+[docs/ci/github-actions.md](../ci/github-actions.md); upgrade
 compatibility is pinned by `tests/upgrade_paths.rs` against the
 committed fixtures.

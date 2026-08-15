@@ -1,4 +1,4 @@
-//! Crash / recovery behavior (Phase 6).
+//! Crash / recovery behavior.
 //!
 //! The recovery model under test (ADR-0027): every write is a single
 //! SQLite transaction, WAL journaling makes committed transactions
@@ -247,8 +247,8 @@ fn payload_content_flips_are_a_documented_detection_limitation() {
     // checksums, so `PRAGMA integrity_check` verifies STRUCTURE (b-trees,
     // page types, free-list) but not cell payload bytes. A bit flip inside
     // a stored text value is therefore not detectable by SQLite alone.
-    // This limitation is documented in the Phase 6 research record and
-    // factors into the encryption-at-rest decision (ADR-0026).
+    // This limitation is documented in ADR-0027 and factors into the
+    // encryption-at-rest decision (ADR-0026).
     //
     // The flip targets a byte INSIDE a known marker string's stored
     // bytes, so the test deterministically lands in cell payload rather

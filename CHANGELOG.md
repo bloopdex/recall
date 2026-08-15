@@ -9,8 +9,10 @@ embedding model id/version.
 
 ## [1.0.0] — 2026-08-15
 
-First release — Phases 0–7 complete (research through hardening and
-release engineering).
+First release: capture, hybrid keyword + semantic search, shell/git/CI
+integrations, projects and lifecycle management, portable export/import,
+integrity checks, and hardening — shipped as a local release bundle with
+checksum-verified install scripts.
 
 ### Core
 
@@ -86,6 +88,7 @@ release engineering).
   commit can lose that one transaction.
 - Shell integration tested on PowerShell and Bash (generated for Zsh,
   not executed — ADR-0017).
-- No git remote / distribution host configured yet: release artifacts
-  are produced locally with checksums; publication awaits the hosting
-  decision (SOT open decision #3, ADR-0031).
+- No distribution host configured yet: release artifacts are produced
+  locally with checksums (never committed — see
+  `docs/release/RELEASE-CHECKLIST.md`); publication awaits the hosting
+  decision (ADR-0031).

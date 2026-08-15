@@ -1,4 +1,4 @@
-//! Install-script behavior (Phase 7, ADR-0031).
+//! Install-script behavior (ADR-0031).
 //!
 //! The install scripts are minimal by design: copy the binary into a
 //! user bin directory, verify checksums when present, print PATH

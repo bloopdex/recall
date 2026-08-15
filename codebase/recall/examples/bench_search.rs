@@ -1,6 +1,5 @@
-//! Repeatable keyword-search baseline (Phase 6 target: 10,000 entries
-//! searched in <100ms — baseline first, per the BloopLab performance
-//! standard: Measure → Profile → Optimize → Benchmark → Document).
+//! Repeatable keyword-search baseline (target: 10,000 entries searched
+//! in <100 ms).
 //!
 //! Run:  cargo run --release --example bench_search
 //!
@@ -120,7 +119,7 @@ fn main() {
         );
     }
     println!();
-    // Phase 3: semantic + hybrid latency on the same 10k corpus, using
+    // Semantic + hybrid latency on the same 10k corpus, using
     // deterministic synthetic unit vectors (latency is data-driven, not
     // content-driven; embedding-quality is measured by the eval harness).
     let dims = recall::infrastructure::embeddings::EMBED_DIMS;

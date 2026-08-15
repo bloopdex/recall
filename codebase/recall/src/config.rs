@@ -63,7 +63,7 @@ mod tests {
 
     /// Both precedence assertions share one test: `RECALL_DB_PATH` is
     /// process-global, and two parallel tests mutating it race (a flake
-    /// found during Phase 7 validation — same fix pattern as the Phase 4
+    /// found during release validation — same fix pattern as the earlier
     /// shell-env tests).
     #[test]
     fn db_path_precedence_and_validation_are_sequential() {

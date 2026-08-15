@@ -118,9 +118,9 @@ pub fn import(db: &mut Db, path: &Path, force: bool) -> Result<()> {
             file.format_version
         )));
     }
-    // Phase 6: an export produced by a NEWER Recall may carry fields this
-    // build does not know — serde would silently drop them. Refuse instead
-    // of importing a lossy copy.
+    // An export produced by a NEWER Recall may carry fields this build
+    // does not know — serde would silently drop them. Refuse instead of
+    // importing a lossy copy.
     let current_schema = db.schema_version()?;
     if file.recall_schema_version > current_schema {
         return Err(Error::InvalidInput(format!(

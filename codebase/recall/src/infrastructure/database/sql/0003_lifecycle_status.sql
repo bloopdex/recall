@@ -1,4 +1,4 @@
--- 0003: memory lifecycle status (Phase 5, ADR-0023).
+-- 0003: memory lifecycle status (ADR-0023).
 --
 -- A memory is `active` (searchable everywhere) or `archived` (kept,
 -- excluded from search by default, recoverable via `recall unarchive`).

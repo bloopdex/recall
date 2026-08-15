@@ -14,7 +14,7 @@ use crate::Result;
 pub const DEFAULT_LIMIT: usize = 20;
 
 // `query` is skipped: search terms are user content and must never appear
-// in logs (Phase 6 log-data policy).
+// in logs (log-data policy, see the observability module doc).
 #[instrument(skip(db, query))]
 pub fn run(db: &Db, query: &str, limit: usize, explain: bool, filter: &SearchFilter) -> Result<()> {
     let started = Instant::now();

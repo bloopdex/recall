@@ -7,7 +7,7 @@
 //! a model/version and are rebuilt locally by `recall embeddings build`
 //! after import.
 //!
-//! Privacy (Phase 0 design + ADR-0018): export is opt-in, and by default
+//! Privacy (ADR-0018): export is opt-in, and by default
 //! every field passes through the secret sanitizer before serialization;
 //! `--include-secrets` exports the raw text explicitly.
 

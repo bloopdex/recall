@@ -160,7 +160,7 @@ fn vec0_desync_is_detected() {
 #[test]
 fn corrupt_database_fails_the_cli_with_a_recovery_message() {
     // The check command against a non-database file: the open itself
-    // fails with the Phase 6 recovery hint.
+    // fails with the recovery hint (ADR-0027).
     let dir = tempfile::tempdir().unwrap();
     let victim = dir.path().join("not-a-db.db");
     std::fs::write(&victim, b"definitely not a database").unwrap();

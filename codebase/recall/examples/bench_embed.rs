@@ -1,4 +1,4 @@
-//! Embedding generation baseline (Phase 3 performance measurement).
+//! Embedding generation baseline.
 //!
 //! Run:  cargo run --release --example bench_embed
 //!

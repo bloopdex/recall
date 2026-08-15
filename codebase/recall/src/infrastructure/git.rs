@@ -90,7 +90,7 @@ fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Commit context (Phase 4): what a just-created commit contains.
+// Commit context (ADR-0019): what a just-created commit contains.
 // ---------------------------------------------------------------------------
 
 /// Context about the commit at `HEAD`, for `recall capture --from-git`
@@ -126,7 +126,7 @@ impl CommitContext {
 }
 
 // ---------------------------------------------------------------------------
-// Hook lifecycle (Phase 4): install / uninstall / status with preservation
+// Hook lifecycle (ADR-0019): install / uninstall / status with preservation
 // of user hooks (ADR-0020).
 // ---------------------------------------------------------------------------
 

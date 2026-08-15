@@ -30,11 +30,11 @@ rows are the source of truth; the FTS index can always be rebuilt from them.
 
 Indexes: `project`, `captured_at` (list + future project scoping).
 
-Phase 0 model mapping: Error→`error`, Context→`context`, Commands/Relevant
+Canonical model mapping: Error→`error`, Context→`context`, Commands/Relevant
 files→`investigation`, Git commit→`git_commit`, Solution→`solution`,
 Project→`project`, Timestamp→`captured_at`, Optional explanation→
 `explanation`. `problem`, `root_cause`, `verification`, `environment` and the
-extra git fields are the Phase 1/2 spec extensions (ADR-0004).
+extra git fields are later spec extensions (ADR-0004).
 
 ## FTS5 design (ADR-0005)
 
@@ -69,7 +69,7 @@ Embedded SQL files (`src/infrastructure/database/sql/NNNN_name.sql`) applied
 in version order, one transaction each, recorded in `schema_migrations`.
 Append-only: never edit an applied migration.
 
-**Pre-migration backup (Phase 5):** when pending migrations exist,
+**Pre-migration backup:** when pending migrations exist,
 `Db::open` snapshots the database to `<db>.pre-migration-backup` first
 (SQLite backup API, rolling, best-effort). Recovery: close Recall,
 restore the backup file over the database, reopen.
@@ -87,7 +87,7 @@ restore the backup file over the database, reopen.
   (via FK cascade + triggers) the embedding metadata and the vec0
   entry.
 
-## Semantic layer (Phase 3 — ADR-0014/0015)
+## Semantic layer (ADR-0014/0015)
 
 - **`embeddings` table** (migration 0002): `memory_id` (PK, FK CASCADE),
   `model`, `model_version`, `dims`, `vector` (little-endian f32 BLOB),
@@ -103,7 +103,7 @@ restore the backup file over the database, reopen.
 - Extension load failure degrades to keyword-only search (`vec_enabled`
   false), never a crash.
 
-## Recovery model (Phase 6 — ADR-0027/0028)
+## Recovery model (ADR-0027/0028)
 
 When something is wrong — a damaged file, a failed upgrade, an
 unreadable database — the order of operations is:
@@ -139,7 +139,7 @@ message).
   table, not the index — count comparisons cannot detect an index
   desync; the FTS5 `integrity-check` command can (ADR-0028).
 
-## Concurrency model (Phase 6 — ADR-0027)
+## Concurrency model (ADR-0027)
 
 - One connection per process; multi-process serialization by SQLite:
   WAL (readers never block writers), 5 s busy timeout, every write in

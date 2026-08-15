@@ -1,8 +1,7 @@
-//! Deterministic property tests for the high-risk boundaries (Phase 6).
+//! Deterministic property tests for the high-risk boundaries.
 //!
-//! The Phase 6 original plan suggested cargo-fuzz targets; the decision
-//! (documented in the Phase 6 research record) is to stay on stable
-//! Rust with deterministic pseudo-random property tests instead:
+//! cargo-fuzz targets were considered and rejected: the suite stays on
+//! stable Rust with deterministic pseudo-random property tests instead:
 //! - no nightly toolchain requirement,
 //! - no new dependencies (cargo-fuzz/proptest would enlarge the tree),
 //! - fixed seeds make every failure reproducible as a regression test.

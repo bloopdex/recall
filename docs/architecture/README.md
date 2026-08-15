@@ -13,15 +13,15 @@ recall (bin) ──► cli (clap) ──► application (capture / search / list
                                                 infrastructure::shell (prompt-hook snippets)
 ```
 
-Phase 4 adds two observation paths around the existing capture flow:
-the shell prompt hook records failed commands into env vars
-(`recall capture --from-shell`), and a post-commit git hook invokes
-`recall capture --from-git` after successful commits (ADR-0017/0019).
+Two observation paths wrap the capture flow: the shell prompt hook
+records failed commands into env vars (`recall capture --from-shell`),
+and a post-commit git hook invokes `recall capture --from-git` after
+successful commits (ADR-0017/0019).
 
-Phase 5 adds lifecycle and portability on top of the same pipeline: a
-single `SearchFilter` (project + archived status) flows through FTS,
-semantic, and hybrid search (ADR-0022/0023); `domain::export` defines
-the portable JSON format; `application::lifecycle` and
+Lifecycle and portability sit on the same pipeline: a single
+`SearchFilter` (project + archived status) flows through FTS, semantic,
+and hybrid search (ADR-0022/0023); `domain::export` defines the
+portable JSON format; `application::lifecycle` and
 `application::transfer` expose archive/unarchive/delete and
 export/import; the pre-migration backup lives in `Db::open`
 (ADR-0023/0006).
@@ -42,15 +42,14 @@ Dependency inversion is used only where it earns its keep: the application
 layer takes `&Db` as a parameter, and tests inject temporary database paths
 rather than mock interfaces.
 
-## Deliberate non-features (Phase 1/2)
+## Deliberate non-features
 
 - **No async, no tokio.** A local CLI has nothing to wait on. If a future
-  phase (e.g. the Phase 4 shell integration) genuinely needs concurrency,
-  revisit then.
+  feature genuinely needs concurrency, revisit then.
 - **No ORM.** The schema is small and stable; rusqlite's typed prepared
-  statements are the right level of abstraction (ADR-002).
-- **No embedded migrations framework** (refinery etc.). Eleven embedded SQL
-  files + a 30-line runner cover the need (ADR-006).
+  statements are the right level of abstraction (ADR-0002).
+- **No embedded migrations framework** (refinery etc.). Embedded SQL
+  files + a small runner cover the need (ADR-0006).
 
 ## Key flows
 
@@ -60,7 +59,7 @@ git/project context best-effort, normalize (trim, empty→None), validate
 `capture.success` with `captures_count = 1`.
 
 **Search** — quote each query term as an FTS5 string literal (injection-proof,
-ADR-005), MATCH against `memories_fts`, rank by weighted bm25, tie-break by
+ADR-0005), MATCH against `memories_fts`, rank by weighted bm25, tie-break by
 capture time, log `search.run` with `search_duration_ms`.
 
 ## Decisions
@@ -90,3 +89,10 @@ capture time, log `search.run` with `search_duration_ms`.
 - ADR-0022 — project-aware search (global default, one filtered pipeline)
 - ADR-0023 — lifecycle (archive/delete, no automatic retention, pre-migration backup)
 - ADR-0024 — export/import (portable JSON, no ids, secrets redacted by default)
+- ADR-0025 — performance strategy (measure at scale, optimize on evidence)
+- ADR-0026 — encryption at rest (rejected, with revisit conditions)
+- ADR-0027 — concurrency, crash safety, and the recovery model
+- ADR-0028 — `recall check` (read-only diagnostics, no auto-repair)
+- ADR-0029 — DeployScore integration (deferred, defined future boundary)
+- ADR-0030 — CI failure capture (opt-in `recall capture --from-ci`)
+- ADR-0031 — release & distribution strategy (versioned surfaces, local-first artifacts)

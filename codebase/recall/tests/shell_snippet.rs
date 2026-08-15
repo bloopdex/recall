@@ -3,7 +3,7 @@
 //! Each test is conditional on the shell being available on this machine
 //! and skips otherwise, so the suite stays portable. PowerShell and Bash
 //! are tested here (Git Bash on Windows); Zsh is generated but untested —
-//! documented as such on the Phase 4 page.
+//! documented as such in ADR-0017.
 
 mod common;
 

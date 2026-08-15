@@ -114,8 +114,8 @@ pub struct Db {
     vec_enabled: bool,
 }
 
-/// Phase 6: corruption at open time gets the recovery model in the
-/// message (restore the pre-migration backup, or re-import from a Recall
+/// Corruption at open time gets the recovery model in the message
+/// (restore the pre-migration backup, or re-import from a Recall
 /// export). The damaged file itself is never touched.
 ///
 /// SQLite opens files lazily, so a corrupt file can surface the
@@ -145,10 +145,10 @@ impl Db {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        // Safety net (Phase 5): when pending migrations exist, snapshot the
-        // database first so an upgrade can always be undone by restoring
-        // `<db>.pre-migration-backup`. Uses SQLite's backup API, which is
-        // WAL-consistent.
+        // Safety net (ADR-0006 amendment): when pending migrations exist,
+        // snapshot the database first so an upgrade can always be undone by
+        // restoring `<db>.pre-migration-backup`. Uses SQLite's backup API,
+        // which is WAL-consistent.
         backup_before_migrations(path);
         // MUST run before the connection is created: rusqlite applies
         // auto-registered extensions only to new connections.
@@ -168,7 +168,7 @@ impl Db {
         Self::from_connection(conn, false)
     }
 
-    /// Run a closure over the underlying SQLite connection (Phase 6).
+    /// Run a closure over the underlying SQLite connection.
     /// Scoped read access keeps write paths (transactions, triggers)
     /// inside the persistence layer while letting diagnostics (`recall
     /// check`), tests, and benchmarks run raw SQL. rusqlite's `execute`
@@ -873,7 +873,7 @@ pub fn to_blob(vector: &[f32]) -> Vec<u8> {
 }
 
 /// Snapshot the database to `<db>.pre-migration-backup` when pending
-/// migrations exist (Phase 5, ADR-0023 lifecycle). Rolling: each upgrade
+/// migrations exist (ADR-0023 lifecycle). Rolling: each upgrade
 /// replaces the previous backup. Best-effort: a backup failure never
 /// blocks the open (migrations are transactional; the backup is the
 /// belt-and-braces recovery path, documented in docs/database/README.md).

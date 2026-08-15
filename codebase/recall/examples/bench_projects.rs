@@ -1,8 +1,8 @@
-//! Project-scoped search baseline (Phase 5, ADR-0022): 10,000 memories
+//! Project-scoped search baseline (ADR-0022): 10,000 memories
 //! across 10 projects, synthetic vectors. Measures global vs
 //! project-scoped FTS, semantic, and hybrid latency — the point is to
 //! verify that the WHERE-clause filtering rides on the existing indexes
-//! without regressing the Phase 3 numbers.
+//! without regressing the unfiltered search numbers.
 //!
 //! Run:  cargo run --release --example bench_projects
 

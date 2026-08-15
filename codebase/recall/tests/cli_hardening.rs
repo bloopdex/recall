@@ -1,4 +1,4 @@
-//! CLI error contract (Phase 6).
+//! CLI error contract (exit codes 0/1/2, ADR-0009).
 //!
 //! The exit-code contract, pinned by these tests:
 //! - `0` — success (including "No results" and first-run database
@@ -193,9 +193,9 @@ fn verbose_logging_goes_to_stderr_and_stdout_stays_data() {
 
 #[test]
 fn logs_never_carry_memory_content_or_secrets() {
-    // Log-data policy (Phase 6): tracing events carry ids, counts, and
-    // metadata — never the captured text itself. A secret in the problem
-    // must not appear in --verbose stderr.
+    // Log-data policy (see the observability module doc): tracing events
+    // carry ids, counts, and metadata — never the captured text itself.
+    // A secret in the problem must not appear in --verbose stderr.
     let (_dir, db) = temp_db_path();
     let out = common::run(
         &db,

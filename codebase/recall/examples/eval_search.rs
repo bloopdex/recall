@@ -1,4 +1,4 @@
-//! Search-quality evaluation harness (Phase 3 DoD).
+//! Search-quality evaluation harness.
 //!
 //! Run:  cargo run --release --example eval_search
 //!

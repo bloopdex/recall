@@ -1,4 +1,4 @@
--- Example entries from the Phase 0 schema validation (fixture corpus).
+-- Example entries from the schema validation (fixture corpus).
 -- These are reference fixtures for manual testing and future test suites.
 -- Load into an existing recall database with the sqlite3 CLI:
 --   sqlite3 recall.db < fixtures/example_entries.sql

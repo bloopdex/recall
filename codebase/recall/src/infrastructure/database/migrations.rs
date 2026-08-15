@@ -85,7 +85,7 @@ mod tests {
     use rusqlite::Connection;
     use std::path::PathBuf;
 
-    /// The Phase 5 DoD migration test: upgrading a database at schema v2
+    /// Migration test: upgrading a database at schema v2
     /// (seeded with real data) applies migration 0003 without data loss
     /// and leaves a pre-migration backup with the old schema.
     #[test]
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(has_status, 0, "the backup must hold the pre-upgrade schema");
     }
 
-    /// Phase 6: the full upgrade path from the original schema (v1, before
+    /// The full upgrade path from the original schema (v1, before
     /// embeddings existed). Both pending migrations apply in one open, the
     /// data survives, and the post-upgrade surface (embeddings, lifecycle)
     /// works on the old row.
@@ -197,7 +197,7 @@ mod tests {
         );
     }
 
-    /// Phase 6: a failing migration must not silently destroy anything.
+    /// A failing migration must not silently destroy anything.
     /// The failure rolls back the migration's transaction (no partial
     /// schema), is not recorded in `schema_migrations`, leaves the
     /// pre-existing file intact, and is retryable once the conflict is
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(memories[0].problem, "conflict survivor");
     }
 
-    /// Phase 6: the documented recovery model, exercised end to end —
+    /// The documented recovery model, exercised end to end —
     /// destroy the database, restore the pre-migration backup, reopen:
     /// the data is back and the upgrade re-applies cleanly.
     #[test]

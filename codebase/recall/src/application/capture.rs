@@ -3,14 +3,15 @@
 //! UTC timestamp, check for near-identical memories (ADR-0011), validate,
 //! and persist atomically.
 //!
-//! Phase 4 adds two context modes (ADR-0017/0019):
+//! Two context modes come from the shell and git integrations
+//! (ADR-0017/0019):
 //!
 //! - `--from-shell` reads the failure snapshot recorded by the shell
 //!   prompt hook (last command + exit code) and pre-fills the problem.
 //! - `--from-git` runs after a commit (post-commit hook) and pre-fills
 //!   the problem from the commit subject, with the commit's changed files.
 //!
-//! Phase 7 adds a third (ADR-0030):
+//! A third mode covers CI failures (ADR-0030):
 //!
 //! - `--from-ci` runs inside an opt-in GitHub Actions failure step
 //!   (`if: failure()`). The problem is built from the whitelisted
@@ -22,7 +23,7 @@
 //! sanitizer (ADR-0018): detected secrets are redacted, shown, and require
 //! explicit confirmation before anything is persisted. In non-interactive
 //! CI the gate fails closed (nothing stored). Problem + Solution remain
-//! the required fields (Phase 0/2 contract).
+//! the required fields.
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
@@ -56,7 +57,8 @@ pub enum CaptureOutcome {
 }
 
 // `args` is skipped: CaptureArgs carries the raw problem/solution text and
-// must never appear in logs (Phase 6 log-data policy).
+// must never appear in logs (log-data policy, see the observability
+// module doc).
 #[instrument(skip(db, cwd, args))]
 pub fn run(db: &mut Db, args: &CaptureArgs, cwd: &Path) -> Result<CaptureOutcome> {
     let stdin_is_tty = std::io::stdin().is_terminal();
@@ -208,7 +210,8 @@ pub fn run_with_io(
 
     // 4. Problem: --problem flag wins; in context modes the (sanitized)
     //    pre-fill is offered at the prompt (Enter accepts, "skip" cancels);
-    //    otherwise the Phase 2 rules apply (piped stdin or plain prompt).
+    //    otherwise the interactive rules apply (piped stdin or plain
+    //    prompt).
     let problem = match (&args.problem, &prefill) {
         (Some(p), _) => p.clone(),
         (None, Some(prefill)) => match resolve_prefilled("Problem", prefill, input, prompt_out)? {
@@ -225,7 +228,7 @@ pub fn run_with_io(
 
     // 5. Solution: --solution flag wins; piped stdin has already been
     //    consumed by the error text in context modes, so a prompt or the
-    //    flag are the only options there (Phase 2 contract).
+    //    flag are the only options there.
     let solution = if let Some(solution) = &args.solution {
         solution.clone()
     } else if stdin_is_piped && !context_mode && args.problem.is_none() {

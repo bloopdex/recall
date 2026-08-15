@@ -1,4 +1,4 @@
-//! Concurrency and multi-process behavior (Phase 6).
+//! Concurrency and multi-process behavior.
 //!
 //! Recall is a local CLI that may run from a shell hook, a git hook,
 //! several terminals, and scripts at the same time. The model under test
@@ -128,7 +128,7 @@ fn concurrent_captures_never_lose_data_silently() {
 #[test]
 fn highly_contended_captures_never_lose_data_silently() {
     // 8 simultaneous captures on a warm database — beyond the documented
-    // usage, and the phase-6 test suite runs it under full-suite load.
+    // usage, and this suite runs it under full-suite load.
     // The pinned guarantee (ADR-0027): every outcome is either a capture
     // or a LOUD "database is locked" busy error (the 5 s timeout
     // exhausted by extreme contention) — never a silent loss, never

@@ -1,7 +1,7 @@
-//! Shell / Git integration hardening (Phase 6).
+//! Shell / Git integration hardening.
 //!
 //! The hard rule (ADR-0017/0019/0020): Recall must never break the
-//! user's shell or Git workflow. The Phase 4 suites already pin hook
+//! user's shell or Git workflow. The integration suites already pin hook
 //! preservation, bare-repo refusal, the missing-binary commit path, and
 //! the non-TTY skip. This file adds the remaining edges:
 //! - uninstall idempotency (repeat calls never error)

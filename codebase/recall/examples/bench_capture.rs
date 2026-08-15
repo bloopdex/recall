@@ -1,5 +1,5 @@
-//! Capture wall-clock baseline (Phase 2 target: <100ms per capture with
-//! git context — baseline first, per the BloopLab performance standard).
+//! Capture wall-clock baseline (target: <100ms per capture with
+//! git context).
 //!
 //! Run:  cargo run --release --example bench_capture
 //!

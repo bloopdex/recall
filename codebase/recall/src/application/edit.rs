@@ -12,7 +12,7 @@ use crate::infrastructure::embeddings::{embedded_text, Embedder, MODEL_ID, MODEL
 use crate::{Error, Result};
 
 // `args` is skipped: EditArgs carries raw replacement text and must never
-// appear in logs (Phase 6 log-data policy).
+// appear in logs (log-data policy, see the observability module doc).
 #[instrument(skip(db, args))]
 pub fn run(db: &mut Db, args: &EditArgs) -> Result<()> {
     let edits = MemoryEdits {

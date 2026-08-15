@@ -2,8 +2,9 @@
 //!
 //! The integration boundary: an opt-in GitHub Actions failure step
 //! (`if: failure()`) pipes a bounded log tail into Recall and names the
-//! remediation it knows. The privacy model follows Phase 4: only the
-//! whitelisted GITHUB_* variables are read (pinned in tests/security.rs),
+//! remediation it knows. The privacy model matches the other context
+//! modes: only the whitelisted GITHUB_* variables are read (pinned in
+//! tests/security.rs),
 //! the log passes the sanitizer, and in non-interactive CI any detected
 //! secret fails closed — nothing is stored.
 //!
