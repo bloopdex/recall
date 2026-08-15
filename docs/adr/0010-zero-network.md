@@ -79,3 +79,22 @@ construction rule. The rule is amended, not weakened:
 - The snapshot variables are written by Recall's own prompt hook, never
   enumerated: `std::env::vars()` remains absent from the codebase, and
   no environment content can enter a memory beyond the whitelist.
+
+## Amendment 3 (Phase 6, 2026-08-15) — enforcement moved into CI
+
+The zero-network guarantee is now checked three ways, and the strongest
+one runs on every platform in CI automatically:
+
+1. The manifest test (direct dependencies only).
+2. The source-reference test (Recall's own code).
+3. **New: a full `cargo tree` scan** — `tests/security.rs` walks the
+   entire transitive dependency tree for both the default build and the
+   opt-in `download` build, and fails if any banned network crate is
+   reachable outside the sanctioned paths (under `fastembed`, or under
+   `reqwest` when the `download` feature is on). This is the same rule
+   as `scripts/check_no_network.ps1`, now inside `cargo test` — so
+   GitHub Actions enforces it on ubuntu and windows with zero extra CI
+   steps. (Notable finding: `reqwest` itself is pulled transitively by
+   hf-hub under fastembed — the carve-out covers it, and the manifest
+   test still pins that Recall's own optional dependency stays
+   feature-gated and default-off.)

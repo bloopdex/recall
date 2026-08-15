@@ -87,6 +87,12 @@ pub enum Command {
     /// last capture time (the current project is marked with *).
     Projects,
 
+    /// Run read-only consistency checks over the database (structural
+    /// integrity, index sync, lifecycle validity). Exits non-zero when
+    /// problems are found. Never repairs anything — see the recovery
+    /// hints in the report.
+    Check,
+
     /// Move a memory out of active search (recoverable: `recall unarchive`).
     Archive {
         /// Id of the memory to archive.
@@ -386,6 +392,11 @@ pub fn run() -> anyhow::Result<()> {
             let config = Config::resolve(cli.db.clone())?;
             let db = Db::open(&config.db_path)?;
             application::projects::run(&db, &cwd)?;
+        }
+        Command::Check => {
+            let config = Config::resolve(cli.db.clone())?;
+            let db = Db::open(&config.db_path)?;
+            application::check::run(&db)?;
         }
         Command::Archive { id } => {
             let config = Config::resolve(cli.db.clone())?;

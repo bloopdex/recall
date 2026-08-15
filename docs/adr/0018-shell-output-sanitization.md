@@ -74,3 +74,32 @@ impossible, and the documentation says so.
 Real-world false positives/negatives from actual shell usage. If a
 pattern proves noisy, narrow it; if a common shape is missed, add it —
 each change is a one-line pattern plus a unit test.
+
+## Amendment (Phase 6, 2026-08-15) — pattern review
+
+The Phase 6 review added high-signal, explainable patterns, each with
+false-positive/limitation tests:
+
+- **JWT tokens** (`eyJ…` + at least two dot-separated base64url
+  segments; greedy scan so trailing sentence punctuation is not
+  swallowed). Documented limitation: any `eyJ`-prefixed identifier with
+  two dots is treated as a JWT (rare in log output, pinned by test).
+- **Well-known hosted tokens:** GitHub (`ghp_`, `gho_`, `ghu_`, `ghs_`,
+  `ghr_`, `github_pat_`), Slack (`xoxb-`, `xoxp-`, `xoxa-`, `xoxr-`,
+  `xoxe-`, `xoxs-`), Stripe (`sk_live_`, `rk_live_`, `whsec_`).
+  Case-sensitive prefixes (lowercase by convention), minimum 8-char
+  tail, boundary-delimited. Documented limitations: tokens truncated to
+  under the minimum are missed; `sk_test_` keys are deliberately NOT
+  matched (test-mode keys are not production secrets).
+- **Boundary set widened** with `)`, `]`, `}`, `{`, `:`, `.`, `!`, `?`
+  so tokens at sentence ends, in parens, or after `label:` are found.
+- **Basic-auth URL passwords containing `@`** are now redacted whole
+  (userinfo ends at the LAST `@` before the first `/`, `?` or `#`).
+  Documented limitation: a raw `/`, `?` or `#` inside a password
+  (normally URL-encoded) leaks the tail.
+- **Deterministic property tests** (`tests/properties.rs`, XorShift,
+  no new deps): embedded secrets never survive sanitization across 200
+  random contexts; clean text passes through byte-identical.
+
+The guarantee is unchanged and stated again: common secret shapes never
+reach the database silently — not that arbitrary secrets are detectable.

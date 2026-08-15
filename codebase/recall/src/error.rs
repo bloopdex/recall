@@ -14,6 +14,18 @@ pub enum Error {
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
 
+    /// The file at the configured path is not a readable Recall database
+    /// (Phase 6). The message carries the recovery model: restore the
+    /// pre-migration backup or re-import from a Recall export. Recall
+    /// never modifies the damaged file.
+    #[error(
+        "database file is corrupt or not a Recall database: {0}. Recovery: restore the \
+         <database>.pre-migration-backup snapshot (taken before the last schema upgrade), \
+         or re-import from a Recall export (`recall import <file>`). The damaged file \
+         was not modified."
+    )]
+    DbCorrupt(String),
+
     #[error("database migration failed: {0}")]
     Migration(String),
 
@@ -40,6 +52,12 @@ pub enum Error {
 
     #[error("export/import error: {0}")]
     Export(String),
+
+    /// `recall check` found consistency problems (the report is printed to
+    /// stdout before this error). The exit code is non-zero so scripts can
+    /// gate on it.
+    #[error("{0}")]
+    CheckFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

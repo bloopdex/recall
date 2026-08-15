@@ -4,7 +4,8 @@
 //! Recall captures things the user did not type into a prompt (a failed
 //! command line, piped error output, a commit subject). Those may embed
 //! secrets: `--password=...`, `Bearer` tokens, AWS key ids, basic-auth
-//! URLs, PEM blocks. Before anything is persisted, captured text runs
+//! URLs, PEM blocks, JWTs, and well-known hosted-token shapes (GitHub,
+//! Slack, Stripe). Before anything is persisted, captured text runs
 //! through this module: matches are replaced with `<redacted>`, the result
 //! is shown to the user, and a confirmation gate (see `application::capture`)
 //! requires explicit approval when anything was redacted.
@@ -63,7 +64,43 @@ const SECRET_FLAGS: &[&str] = &[
     "client-secret",
 ];
 
-/// A word boundary is whitespace or one of these delimiters.
+/// Well-known hosted-token prefixes (Phase 6, ADR-0018 amendment).
+/// Matching is case-sensitive — these prefixes are lowercase by
+/// convention, and case-sensitivity keeps false positives down. A token
+/// must have at least [`MIN_TOKEN_LEN`] characters after the prefix, so a
+/// short identifier that happens to start with `ghp_` is left alone.
+/// Documented limitation: tokens shown truncated to fewer than the minimum
+/// length are not detected.
+const TOKEN_PREFIXES: &[&str] = &[
+    // GitHub personal access tokens.
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "github_pat_",
+    // Slack tokens and signing secrets.
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "xoxr-",
+    "xoxe-",
+    "xoxs-",
+    // Stripe restricted/live keys and webhook secrets.
+    "sk_live_",
+    "rk_live_",
+    "whsec_",
+];
+
+const MIN_TOKEN_LEN: usize = 8;
+
+fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// A word boundary is whitespace or one of these delimiters. Phase 6
+/// additions (`)`, `]`, `}`, `{`, `:`, `.`, `!`, `?`) let tokens at the
+/// end of sentences, in parens, or in `url:token` positions be detected.
 fn is_boundary(c: char) -> bool {
     c.is_whitespace()
         || c == '"'
@@ -76,7 +113,15 @@ fn is_boundary(c: char) -> bool {
         || c == '='
         || c == ','
         || c == '('
+        || c == ')'
         || c == '['
+        || c == ']'
+        || c == '{'
+        || c == '}'
+        || c == ':'
+        || c == '.'
+        || c == '!'
+        || c == '?'
 }
 
 fn is_value_end(c: char) -> bool {
@@ -155,7 +200,74 @@ pub fn sanitize(text: &str) -> SanitizeReport {
             }
         }
 
+        // JWT tokens: `eyJ…` (the base64url encoding of a `{"…` header)
+        // followed by two or more dot-separated segments. The scan is
+        // greedy over token characters and dots so a JWT directly
+        // followed by sentence punctuation (`.`) redacts the token, not
+        // the punctuation; trailing dots are trimmed back. Documented
+        // limitation: any `eyJ`-prefixed identifier with at least two
+        // dots is treated as a JWT — such identifiers are rare in log
+        // output.
+        if boundary_before && text[i..].starts_with("eyJ") {
+            let mut j = i + 3;
+            let mut dots = 0;
+            while j < bytes.len() && (is_token_char(bytes[j]) || bytes[j] == '.') {
+                if bytes[j] == '.' {
+                    // Consecutive dots are not a JWT.
+                    if j + 1 < bytes.len() && bytes[j + 1] == '.' {
+                        break;
+                    }
+                    dots += 1;
+                }
+                j += 1;
+            }
+            while j > i && bytes[j - 1] == '.' {
+                j -= 1;
+                dots -= 1;
+            }
+            if dots >= 2 && j > i + 3 && (j == bytes.len() || is_boundary(bytes[j])) {
+                out.push_str("<redacted>");
+                redactions += 1;
+                i = j;
+                continue;
+            }
+        }
+
+        // Well-known hosted tokens: `ghp_…`, `xoxb-…`, `sk_live_…`, …
+        if boundary_before {
+            let mut matched: Option<(usize, usize)> = None; // (prefix_len, token_end)
+            for prefix in TOKEN_PREFIXES {
+                let Some(rest) = text.get(i..i + prefix.len() + MIN_TOKEN_LEN) else {
+                    continue;
+                };
+                if !rest.starts_with(prefix) {
+                    continue;
+                }
+                // The tail runs to the first non-token character (or the end).
+                let tail_start = i + prefix.len();
+                let mut j = tail_start;
+                while j < bytes.len() && is_token_char(bytes[j]) {
+                    j += 1;
+                }
+                if j - tail_start >= MIN_TOKEN_LEN && (j == bytes.len() || is_boundary(bytes[j])) {
+                    matched = Some((prefix.len(), j));
+                    break;
+                }
+            }
+            if let Some((_, token_end)) = matched {
+                out.push_str("<redacted>");
+                redactions += 1;
+                i = token_end;
+                continue;
+            }
+        }
+
         // Basic-auth URLs: `scheme://user:pass@host` — redact the password.
+        // The userinfo ends at the LAST `@` before the host starts (the
+        // first `/`, `?` or `#` after the password, or the end of the
+        // value) — so passwords containing `@` are redacted whole.
+        // Documented limitation: a raw `/`, `?` or `#` inside a password
+        // (normally URL-encoded) leaks the tail of the password.
         if c.is_ascii_alphabetic() && text[i..].contains("://") {
             if let Some(scheme_end) = text[i..].find("://") {
                 let user_start = i + scheme_end + 3;
@@ -164,7 +276,13 @@ pub fn sanitize(text: &str) -> SanitizeReport {
                     let colon_abs = user_start + colon;
                     if colon_abs > user_start {
                         let pass_start = colon_abs + 1;
-                        if let Some(at) = user_part[colon + 1..].find('@') {
+                        let after_pass = &user_part[colon + 1..];
+                        let host_limit = after_pass
+                            .find(|ch: char| ['/', '?', '#'].contains(&ch))
+                            .unwrap_or(after_pass.len());
+                        let value_limit = after_pass.find(is_value_end).unwrap_or(after_pass.len());
+                        let limit = host_limit.min(value_limit);
+                        if let Some(at) = after_pass[..limit].rfind('@') {
                             let pass_end = pass_start + at;
                             if pass_end > pass_start && pass_end <= text.len() {
                                 out.push_str(&text[i..colon_abs + 1]);
@@ -460,5 +578,149 @@ mod tests {
         let t = truncate_text(&long);
         assert!(t.ends_with("\n... (output truncated)"));
         assert!(t.len() < 20_000);
+    }
+
+    // -------------------------------------------------------------------
+    // Phase 6 additions (ADR-0018 amendment)
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn jwt_in_error_output_is_redacted() {
+        let text = "auth failed: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let r = sanitize(text);
+        assert_eq!(r.redactions, 1);
+        assert!(!r.sanitized.contains("eyJ"));
+        assert_eq!(r.sanitized, "auth failed: <redacted>");
+    }
+
+    #[test]
+    fn jwt_in_authorization_header_is_covered_by_the_header_rule() {
+        let text = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def";
+        let r = sanitize(text);
+        assert_eq!(r.redactions, 1);
+        assert!(!r.sanitized.contains("eyJ"));
+        assert_eq!(r.sanitized, "Authorization: <redacted>");
+    }
+
+    #[test]
+    fn jwt_followed_by_sentence_punctuation_redacts_only_the_token() {
+        // (`token:` would trip the key=value rule first, so the label here
+        // is deliberately a non-secret key.)
+        let r = sanitize("jwt eyJhbGciOiJIUzI1NiJ9.abc.def. then");
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "jwt <redacted>. then");
+    }
+
+    #[test]
+    fn jwt_immediately_followed_by_another_segment_is_fully_redacted() {
+        // A JWT directly followed by a further dot-segment (no separator)
+        // must not leak the tail.
+        let r = sanitize("eyJhbGciOiJIUzI1NiJ9.abc.def.ghi");
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "<redacted>");
+    }
+
+    #[test]
+    fn jwt_with_fewer_than_two_dots_is_not_redacted() {
+        let r = sanitize("eyJabc.def");
+        assert_eq!(r.redactions, 0);
+        assert_eq!(r.sanitized, "eyJabc.def");
+    }
+
+    #[test]
+    fn consecutive_dots_after_eyj_are_not_a_jwt() {
+        let r = sanitize("eyJ..abc");
+        assert_eq!(r.redactions, 0);
+    }
+
+    #[test]
+    fn eyj_prefixed_identifier_with_two_dots_is_a_documented_false_positive() {
+        // Documented limitation: `eyJ`-prefixed identifiers with at least
+        // two dots are treated as JWTs. Pinned so any future change to
+        // this trade-off is deliberate.
+        let r = sanitize("const eyJavascript.foo.bar = 1");
+        assert_eq!(r.redactions, 1);
+    }
+
+    #[test]
+    fn github_personal_access_token_is_redacted() {
+        let text = "clone failed: ghp_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s";
+        let r = sanitize(text);
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "clone failed: <redacted>");
+    }
+
+    #[test]
+    fn github_fine_grained_token_is_redacted() {
+        let text =
+            "github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let r = sanitize(text);
+        assert_eq!(r.redactions, 1);
+        assert!(!r.sanitized.contains("github_pat_"));
+    }
+
+    #[test]
+    fn slack_bot_token_is_redacted() {
+        let r = sanitize("xoxb-123456789012-abcdefghijklmnop");
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "<redacted>");
+    }
+
+    #[test]
+    fn slack_token_in_parens_is_redacted() {
+        let r = sanitize("failed (token: xoxp-123456789012-abcdefghijklmnop)");
+        assert_eq!(r.redactions, 1);
+        assert!(!r.sanitized.contains("xoxp-"));
+    }
+
+    #[test]
+    fn stripe_live_key_is_redacted() {
+        let r = sanitize("sk_live_51H6m8lABCDefghijklmnopQRST");
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "<redacted>");
+    }
+
+    #[test]
+    fn stripe_test_key_is_not_redacted() {
+        // Test-mode keys are not production secrets; the prefix list is
+        // deliberately limited to `sk_live_` / `rk_live_`.
+        let r = sanitize("sk_test_51H6m8lABCDefghijklmnopQRST");
+        assert_eq!(r.redactions, 0);
+    }
+
+    #[test]
+    fn token_prefix_short_text_is_not_redacted() {
+        // Below the minimum token length: a short identifier, not a token.
+        let r = sanitize("ghp_short");
+        assert_eq!(r.redactions, 0);
+    }
+
+    #[test]
+    fn token_at_end_of_sentence_is_redacted() {
+        let r = sanitize("the token was xoxb-123456789012-abcdefghijklmnop.");
+        assert_eq!(r.redactions, 1);
+        assert!(!r.sanitized.contains("xoxb-"));
+    }
+
+    #[test]
+    fn url_password_containing_at_is_fully_redacted() {
+        let r = sanitize("postgres://user:p@ss@host:5432/db");
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "postgres://user:<redacted>@host:5432/db");
+    }
+
+    #[test]
+    fn url_with_at_after_the_host_is_not_redacted_as_a_password() {
+        // The `@mention` after the path is not part of the userinfo.
+        let r = sanitize("https://user:pass@host/path @mention");
+        assert_eq!(r.redactions, 1);
+        assert_eq!(r.sanitized, "https://user:<redacted>@host/path @mention");
+    }
+
+    #[test]
+    fn url_without_credentials_is_not_redacted() {
+        let r = sanitize("https://github.com/x/y.git");
+        assert_eq!(r.redactions, 0);
+        assert_eq!(r.sanitized, "https://github.com/x/y.git");
     }
 }

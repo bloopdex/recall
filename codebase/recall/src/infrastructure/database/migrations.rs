@@ -138,4 +138,192 @@ mod tests {
             .unwrap();
         assert_eq!(has_status, 0, "the backup must hold the pre-upgrade schema");
     }
+
+    /// Phase 6: the full upgrade path from the original schema (v1, before
+    /// embeddings existed). Both pending migrations apply in one open, the
+    /// data survives, and the post-upgrade surface (embeddings, lifecycle)
+    /// works on the old row.
+    #[test]
+    fn upgrading_a_v1_database_applies_both_migrations_and_keeps_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recall.db");
+
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("sql/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (
+                 version    INTEGER PRIMARY KEY,
+                 name       TEXT NOT NULL,
+                 applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             );
+             INSERT INTO schema_migrations (version, name) VALUES (1, 'init');",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (problem, solution, captured_at)
+             VALUES ('v1 era memory', 'old fix', '2026-08-13T10:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 3);
+
+        let memories = db.list_memories(10).unwrap();
+        assert_eq!(memories.len(), 1, "v1 data must survive to v3");
+        assert_eq!(memories[0].problem, "v1 era memory");
+        assert_eq!(memories[0].status, MemoryStatus::Active);
+
+        // Post-upgrade surfaces work on the migrated row: embedding insert
+        // (migration 2) and lifecycle (migration 3).
+        let mut v = vec![0.1f32; crate::infrastructure::embeddings::EMBED_DIMS];
+        v[0] = 1.0;
+        db.insert_embedding(
+            memories[0].id,
+            "bench",
+            "1",
+            crate::infrastructure::embeddings::EMBED_DIMS,
+            &v,
+        )
+        .unwrap();
+        assert!(db
+            .set_status(memories[0].id, MemoryStatus::Archived)
+            .unwrap());
+        assert_eq!(
+            db.get_memory(memories[0].id).unwrap().unwrap().status,
+            MemoryStatus::Archived
+        );
+    }
+
+    /// Phase 6: a failing migration must not silently destroy anything.
+    /// The failure rolls back the migration's transaction (no partial
+    /// schema), is not recorded in `schema_migrations`, leaves the
+    /// pre-existing file intact, and is retryable once the conflict is
+    /// resolved.
+    #[test]
+    fn a_failed_migration_is_atomic_and_retryable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recall.db");
+
+        // v2 database, then simulate an external tool having already added
+        // the column migration 3 wants to add (a realistic conflict).
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("sql/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("sql/0002_embeddings.sql"))
+            .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (
+                 version    INTEGER PRIMARY KEY,
+                 name       TEXT NOT NULL,
+                 applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             );
+             INSERT INTO schema_migrations (version, name) VALUES (1, 'init'), (2, 'embeddings');",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (problem, solution, captured_at)
+             VALUES ('conflict survivor', 's', '2026-08-14T10:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch("ALTER TABLE memories ADD COLUMN status TEXT")
+            .unwrap();
+        drop(conn);
+
+        let err = Db::open(&path).unwrap_err().to_string();
+        assert!(
+            err.contains("migration") && err.contains("failed"),
+            "the failure must be reported as a migration error: {err}"
+        );
+
+        // A backup of the pre-upgrade state was taken before the attempt.
+        let backup = PathBuf::from(format!("{}.pre-migration-backup", path.display()));
+        assert!(
+            backup.exists(),
+            "the backup must exist even though the migration failed"
+        );
+
+        // The failed migration must not be recorded, the conflict is
+        // untouched, and the data survives.
+        let probe = Connection::open(&path).unwrap();
+        let max_version: i64 = probe
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(max_version, 2, "the failed migration must not be recorded");
+        let rows: i64 = probe
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "existing data must survive the failed migration");
+        drop(probe);
+
+        // Retryable: resolve the conflict, re-open — migration 3 applies.
+        let probe = Connection::open(&path).unwrap();
+        probe
+            .execute_batch("ALTER TABLE memories DROP COLUMN status")
+            .unwrap();
+        drop(probe);
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 3);
+        let memories = db.list_memories(10).unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].problem, "conflict survivor");
+    }
+
+    /// Phase 6: the documented recovery model, exercised end to end —
+    /// destroy the database, restore the pre-migration backup, reopen:
+    /// the data is back and the upgrade re-applies cleanly.
+    #[test]
+    fn restoring_the_pre_migration_backup_recovers_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recall.db");
+
+        // v2 database with one row; opening upgrades it and snapshots the
+        // pre-upgrade state.
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("sql/0001_init.sql"))
+            .unwrap();
+        conn.execute_batch(include_str!("sql/0002_embeddings.sql"))
+            .unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (
+                 version    INTEGER PRIMARY KEY,
+                 name       TEXT NOT NULL,
+                 applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             );
+             INSERT INTO schema_migrations (version, name) VALUES (1, 'init'), (2, 'embeddings');",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (problem, solution, captured_at)
+             VALUES ('backup me', 's', '2026-08-14T10:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 3);
+        drop(db);
+
+        let backup = PathBuf::from(format!("{}.pre-migration-backup", path.display()));
+        assert!(backup.exists());
+
+        // Destroy the main database.
+        std::fs::write(&path, b"this is no longer a database").unwrap();
+
+        // Restore the snapshot: copy the backup over the main file.
+        std::fs::copy(&backup, &path).unwrap();
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 3);
+        let memories = db.list_memories(10).unwrap();
+        assert_eq!(memories.len(), 1, "the restored data must be intact");
+        assert_eq!(memories[0].problem, "backup me");
+    }
 }

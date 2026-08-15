@@ -11,7 +11,9 @@ use crate::infrastructure::database::Db;
 use crate::infrastructure::embeddings::{embedded_text, Embedder, MODEL_ID, MODEL_VERSION};
 use crate::{Error, Result};
 
-#[instrument(skip(db))]
+// `args` is skipped: EditArgs carries raw replacement text and must never
+// appear in logs (Phase 6 log-data policy).
+#[instrument(skip(db, args))]
 pub fn run(db: &mut Db, args: &EditArgs) -> Result<()> {
     let edits = MemoryEdits {
         problem: args.problem.clone(),

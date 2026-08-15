@@ -102,3 +102,53 @@ restore the backup file over the database, reopen.
   `tests/semantic_10k.rs`). NaN/Inf vectors are rejected at insert.
 - Extension load failure degrades to keyword-only search (`vec_enabled`
   false), never a crash.
+
+## Recovery model (Phase 6 — ADR-0027/0028)
+
+When something is wrong — a damaged file, a failed upgrade, an
+unreadable database — the order of operations is:
+
+1. **Diagnose:** `recall check` (read-only): SQLite `integrity_check`,
+   the FTS5 `integrity-check` command, embedding-orphan detection, vec0
+   row-count agreement, lifecycle status validity. Non-zero exit when
+   problems exist.
+2. **Restore the pre-migration backup:** every schema upgrade snapshots
+   the database to `<db>.pre-migration-backup` first (WAL-consistent,
+   rolling). Copy it back over the database and reopen — the upgrade
+   re-applies cleanly (tested end to end).
+3. **Re-import a Recall export:** `recall import <file>` rebuilds the
+   store from portable JSON (redacted by default — restore a
+   `--include-secrets` export if you need the raw text back), then
+   `recall embeddings build` regenerates vectors.
+
+Recall never auto-repairs. Corrupt files are never modified by Recall
+and always fail loudly (`DbCorrupt` carries this recovery model in the
+message).
+
+**Known detection boundaries (honest limits):**
+
+- `PRAGMA integrity_check` verifies STRUCTURE (b-trees, page types,
+  free-list). SQLite pages carry no content checksums, so a bit flip
+  inside cell payload text is undetectable (pinned by
+  `tests/crash_recovery.rs`) — part of the encryption-at-rest analysis
+  (ADR-0026).
+- `synchronous = NORMAL` + WAL: committed transactions survive process
+  crashes; a power loss in the instant of the last commit can lose that
+  transaction (accepted for a personal memory store — ADR-0027).
+- On an external-content FTS5 table, `count(*)` scans the content
+  table, not the index — count comparisons cannot detect an index
+  desync; the FTS5 `integrity-check` command can (ADR-0028).
+
+## Concurrency model (Phase 6 — ADR-0027)
+
+- One connection per process; multi-process serialization by SQLite:
+  WAL (readers never block writers), 5 s busy timeout, every write in
+  an explicit transaction, foreign keys ON.
+- Verified by `tests/concurrency.rs`: 8 concurrent capture processes
+  all persist; readers complete <500 ms behind a HELD write
+  transaction; uncommitted rows are invisible to other connections;
+  archive-vs-delete races leave a consistent state; concurrent
+  embedding inserts lose nothing.
+- Crash safety verified by `tests/crash_recovery.rs`: a capture process
+  killed at six different points (including mid-write) never leaves a
+  partial memory or a corrupted index.

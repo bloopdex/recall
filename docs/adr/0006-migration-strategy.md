@@ -39,3 +39,20 @@ backup failure logs and never blocks the open). Recovery path: close
 Recall, restore the backup file over the database, reopen. The upgrade
 of a seeded v2 database is covered by a migration test that verifies
 both the data preservation and the backup's pre-upgrade schema.
+
+## Amendment 2 (Phase 6, 2026-08-15) — migration hardening
+
+Phase 6 extended the migration guarantee suite and documented the
+recovery model (ADR-0027):
+
+- **v1 → v3** upgrade covered (both pending migrations in one open; old
+  data survives; embeddings + lifecycle work on the migrated rows).
+- **Failure is atomic and retryable** — a migration that fails (pinned
+  by a pre-existing conflicting column, the realistic case) rolls back
+  its transaction, is not recorded in `schema_migrations`, leaves the
+  file and data untouched, and succeeds after the conflict is resolved.
+- **Recovery from backup is tested end to end** — destroy the database,
+  restore `<db>.pre-migration-backup`, reopen: data back, upgrade
+  re-applies cleanly.
+- Migrations never silently destroy memories: the same guarantee as
+  before, now with failure-path tests on both upgrade routes.

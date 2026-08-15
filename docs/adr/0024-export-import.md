@@ -54,3 +54,23 @@ Backups and machine moves are a documented, tested workflow
 (round-trip test preserves fields, timestamps, and archived status).
 The format is stable at version 1; any breaking change bumps
 `format_version` and import rejects versions it cannot read.
+
+## Amendment (Phase 6, 2026-08-15) — import hardening
+
+Three hardening fixes, all test-pinned:
+
+1. **Future-schema exports are refused.** Import previously checked only
+   `format_version`; an export from a NEWER Recall would have had its
+   unknown fields silently dropped by serde — a lossy import. Now
+   `recall_schema_version > current` fails with an upgrade message.
+2. **All-or-nothing now covers every field.** Timestamp and lifecycle
+   status errors were discovered mid-insert-loop, meaning a bad entry
+   late in the file left earlier entries inserted. All entries are now
+   fully validated (required fields, `captured_at` parse, strict
+   status) before the first insert; the property suite
+   (`tests/properties.rs`) proves random malformed files never panic
+   and never partially write.
+3. **Strict status parsing on import.** Unknown lifecycle statuses were
+   silently defaulted to `active`; they are now rejected with the entry
+   index. Non-UTF-8 files get a "not a valid Recall export" error
+   instead of an obscure read error.

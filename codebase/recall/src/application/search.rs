@@ -13,7 +13,9 @@ use crate::Result;
 
 pub const DEFAULT_LIMIT: usize = 20;
 
-#[instrument(skip(db))]
+// `query` is skipped: search terms are user content and must never appear
+// in logs (Phase 6 log-data policy).
+#[instrument(skip(db, query))]
 pub fn run(db: &Db, query: &str, limit: usize, explain: bool, filter: &SearchFilter) -> Result<()> {
     let started = Instant::now();
 
@@ -34,9 +36,10 @@ pub fn run(db: &Db, query: &str, limit: usize, explain: bool, filter: &SearchFil
     let hits = db.hybrid_search(query, query_vector.as_deref(), filter, limit)?;
     let duration_ms = started.elapsed().as_millis();
 
+    // No raw query text in the event — log-data policy: content never
+    // leaves through logs (a search could itself contain a secret).
     tracing::info!(
         event = "search.run",
-        query,
         project = ?filter.project,
         include_archived = filter.include_archived,
         results = hits.len(),

@@ -114,6 +114,82 @@ fn capture_does_not_auto_collect_environment_variables() {
     );
 }
 
+/// Full transitive-tree scan (Phase 6): the manifest check above only sees
+/// direct dependencies. This test scans the whole `cargo tree`, so a
+/// network crate can never enter behind a renamed or indirect dependency
+/// either. Sanctioned paths (ADR-0010 amendment 2 / ADR-0013):
+/// - default build: only under `fastembed` (hf-hub's downloader — a
+///   code path Recall's runtime never invokes);
+/// - `download` feature: the opt-in reqwest stack.
+///
+/// This is the same rule as `scripts/check_no_network.ps1`, running
+/// automatically on every platform in `cargo test` (and therefore CI).
+#[test]
+fn full_dependency_tree_contains_no_network_crates() {
+    fn run_tree(features: Option<&str>) -> String {
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args(["tree", "--edges", "normal", "--prefix", "none"]);
+        if let Some(f) = features {
+            cmd.args(["--features", f]);
+        }
+        let out = cmd
+            .output()
+            .expect("cargo must be available (tests run under cargo)");
+        assert!(
+            out.status.success(),
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+    fn parent_chain(name: &str, features: Option<&str>) -> String {
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.args(["tree", "-i", name, "--edges", "normal", "--prefix", "none"]);
+        if let Some(f) = features {
+            cmd.args(["--features", f]);
+        }
+        let out = cmd
+            .output()
+            .expect("cargo must be available (tests run under cargo)");
+        assert!(
+            out.status.success(),
+            "cargo tree -i {name} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    // Default build. (reqwest itself may appear under fastembed — hf-hub
+    // pulls it in — which is exactly the fastembed carve-out; Recall's own
+    // optional direct dependency is pinned by the manifest check above.)
+    let default_tree = run_tree(None);
+    for line in default_tree.lines() {
+        let name = line.split_whitespace().next().unwrap_or("");
+        if !BANNED_DEPS.contains(&name) {
+            continue;
+        }
+        let chain = parent_chain(name, None);
+        assert!(
+            chain.contains("fastembed"),
+            "banned network crate '{name}' found in the default dependency tree outside the fastembed carve-out:\n{chain}"
+        );
+    }
+
+    // Opt-in download feature: the reqwest stack becomes sanctioned.
+    let download_tree = run_tree(Some("download"));
+    for line in download_tree.lines() {
+        let name = line.split_whitespace().next().unwrap_or("");
+        if !BANNED_DEPS.contains(&name) {
+            continue;
+        }
+        let chain = parent_chain(name, Some("download"));
+        assert!(
+            chain.contains("fastembed") || chain.contains("reqwest"),
+            "banned network crate '{name}' in the download tree is not reachable only via fastembed/reqwest:\n{chain}"
+        );
+    }
+}
+
 /// ADR-0010 amendment (Phase 4): the ONLY module allowed to read
 /// environment variables is `infrastructure/shell.rs`, and it may read
 /// exactly the whitelist below — the three snapshot variables written by

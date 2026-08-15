@@ -198,6 +198,170 @@ fn import_rejects_malformed_json() {
     assert!(stderr(&out).contains("not a valid Recall export"));
 }
 
+#[test]
+fn import_rejects_a_future_recall_schema_version() {
+    // A newer Recall may emit fields this build does not know; importing
+    // would silently drop them. Refuse instead.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db.db");
+    let path = dir.path().join("future.json");
+    std::fs::write(
+        &path,
+        r#"{"format_version": 1, "exported_at": "2026-08-15T00:00:00.000Z", "recall_schema_version": 99, "memories": []}"#,
+    )
+    .unwrap();
+    let out = import(&db, &path, &[]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("newer Recall"), "{}", stderr(&out));
+}
+
+#[test]
+fn import_rejects_a_bad_timestamp_before_inserting_anything() {
+    // All-or-nothing holds for timestamp errors too: a valid entry
+    // BEFORE the bad one must not be inserted.
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db.db");
+    let path = dir.path().join("bad-time.json");
+    std::fs::write(
+        &path,
+        r#"{"format_version": 1, "exported_at": "2026-08-15T00:00:00.000Z", "recall_schema_version": 3,
+           "memories": [
+             {"problem": "valid first", "solution": "s", "captured_at": "2026-08-14T10:00:00.000Z"},
+             {"problem": "bad timestamp", "solution": "s", "captured_at": "not-a-timestamp"}
+           ]}"#,
+    )
+    .unwrap();
+    let out = import(&db, &path, &[]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("captured_at"), "{}", stderr(&out));
+    let out = run(&db, &["search", "valid first"]);
+    assert!(
+        stdout(&out).contains("No results"),
+        "the valid entry must not be inserted when a later one is bad"
+    );
+}
+
+#[test]
+fn import_rejects_an_unknown_status_before_inserting_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db.db");
+    let path = dir.path().join("bad-status.json");
+    std::fs::write(
+        &path,
+        r#"{"format_version": 1, "exported_at": "2026-08-15T00:00:00.000Z", "recall_schema_version": 3,
+           "memories": [
+             {"problem": "valid first", "solution": "s", "captured_at": "2026-08-14T10:00:00.000Z"},
+             {"problem": "weird status", "solution": "s", "status": "frozen",
+              "captured_at": "2026-08-14T10:00:00.000Z"}
+           ]}"#,
+    )
+    .unwrap();
+    let out = import(&db, &path, &[]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("status"), "{}", stderr(&out));
+    let out = run(&db, &["search", "valid first"]);
+    assert!(stdout(&out).contains("No results"));
+}
+
+#[test]
+fn import_rejects_a_non_utf8_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db.db");
+    let path = dir.path().join("binary.json");
+    std::fs::write(&path, [0xFFu8, 0xFE, 0x00, 0x01, 0x02]).unwrap();
+    let out = import(&db, &path, &[]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("not a valid Recall export"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn import_rejects_a_truncated_json_file_and_leaves_the_db_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db.db");
+    capture(&db, "existing memory", "alpha");
+    let path = dir.path().join("truncated.json");
+    let full = r#"{"format_version": 1, "exported_at": "2026-08-15T00:00:00.000Z", "recall_schema_version": 3,
+                  "memories": [{"problem": "extra", "solution": "s", "captured_at": "2026-08-14T10:00:00.000Z"}]}"#;
+    // Cut the file mid-JSON.
+    std::fs::write(&path, &full[..full.len() / 2]).unwrap();
+    let out = import(&db, &path, &[]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("not a valid Recall export"),
+        "{}",
+        stderr(&out)
+    );
+    // The existing database is untouched: still exactly one memory.
+    let conn = recall::infrastructure::database::Db::open(&db).expect("open db");
+    let count: i64 = conn
+        .with_connection(|c| c.query_row("SELECT count(*) FROM memories", [], |r| r.get(0)))
+        .expect("count");
+    assert_eq!(count, 1, "a failed import must not change the database");
+}
+
+#[test]
+fn large_export_import_roundtrip_is_lossless() {
+    // 1,000 memories through the full export → import roundtrip into a
+    // fresh database: every entry arrives, including archived status.
+    // Inserts go through the library (spawning 1,000 CLI processes would
+    // make this test needlessly slow); export/import run through the CLI.
+    let dir = tempfile::tempdir().unwrap();
+    let db1 = dir.path().join("one.db");
+    let db2 = dir.path().join("two.db");
+    let export_path = dir.path().join("large.json");
+
+    const N: usize = 1000;
+    {
+        let mut db = recall::infrastructure::database::Db::open(&db1).expect("open db1");
+        for i in 0..N {
+            let memory = recall::domain::memory::NewMemory {
+                problem: format!("bulk problem number {i}"),
+                solution: "bulk solution".into(),
+                project: Some(format!("project-{}", i % 5)),
+                ..Default::default()
+            };
+            let id = db
+                .insert_memory(&memory, time::OffsetDateTime::now_utc())
+                .expect("insert");
+            if i == 0 {
+                db.set_status(id, recall::domain::memory::MemoryStatus::Archived)
+                    .expect("archive first");
+            }
+        }
+    }
+
+    export(&db1, &export_path, &[]);
+    let out = import(&db2, &export_path, &[]);
+    assert!(out.status.success(), "import failed: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains(&format!("Imported {N}")),
+        "{}",
+        stdout(&out)
+    );
+
+    // Losslessness: counts and the archived status, verified at the
+    // library level (search output caps at the default limit).
+    let db = recall::infrastructure::database::Db::open(&db2).expect("open db2");
+    let (total, archived): (i64, i64) = db.with_connection(|c| {
+        (
+            c.query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+                .unwrap(),
+            c.query_row(
+                "SELECT count(*) FROM memories WHERE status = 'archived'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap(),
+        )
+    });
+    assert_eq!(total, N as i64, "the roundtrip must be lossless");
+    assert_eq!(archived, 1, "archived status must survive the roundtrip");
+}
+
 #[allow(dead_code)]
 fn _bin() -> &'static str {
     bin()

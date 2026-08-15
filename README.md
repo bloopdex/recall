@@ -117,6 +117,50 @@ cargo run --release --example bench_search
 
 See [docs/development/README.md](docs/development/README.md) for the full workflow and [docs/adr/](docs/adr/) for architecture decisions.
 
+## Security model
+
+What is encrypted, what is redacted, what never leaves the machine
+(Phase 6 documentation TODO, ADR-0026/0018/0010/0027):
+
+- **Encryption at rest: rejected, deliberately.** Recall keeps a
+  plaintext SQLite database protected by OS account permissions.
+  Researched in Phase 6 (SQLCipher, SEE, OS keychains, passphrases,
+  field-level encryption): every option either broke the zero-friction
+  hook flows (passphrase prompts in non-interactive git hooks), gave
+  protection no stronger than the OS account (key files next to the
+  database), or forked the storage engine away from inspectable plain
+  SQLite. Revisit conditions are recorded in ADR-0026.
+- **Redaction is the primary defense.** Auto-captured context (failed
+  commands, piped error output, commit subjects) passes through a
+  conservative secret detector — flags (`--password=…`), key/value
+  assignments (`DB_PASSWORD=…`), Bearer/Authorization headers, AWS key
+  ids, basic-auth URLs, PEM blocks, JWTs, and GitHub/Slack/Stripe token
+  shapes (ADR-0018). Detected secrets are shown redacted and require
+  explicit confirmation before anything is stored. Exports redact by
+  default (`--include-secrets` is opt-in). The guarantee is narrow and
+  honest: common secret shapes never reach the database silently —
+  not that arbitrary secrets are detectable.
+- **Zero network, enforced in CI.** The default build has no network
+  code path; the only network-capable code is the opt-in `recall
+  embeddings download` feature. A dependency-tree scan runs inside
+  `cargo test` on every platform (tests/security.rs), so CI fails if a
+  network crate ever enters the tree.
+- **Environment collection is whitelisted.** Recall reads exactly the
+  three snapshot variables its own prompt hook writes
+  (`RECALL_LAST_COMMAND`, `RECALL_LAST_EXIT_CODE`, `RECALL_LAST_CWD`)
+  plus home-location variables; it never enumerates the environment
+  (pinned by test).
+- **Logs carry no content.** Tracing events record ids, counts, and
+  metadata — never memory text or query terms (pinned by test).
+- **Corruption fails loud.** A damaged database refuses to open with a
+  message carrying the recovery model: `recall check` to diagnose,
+  restore the `<db>.pre-migration-backup` snapshot, or re-import a
+  `recall export`. Recall never auto-repairs your data.
+- **Integrity is verifiable.** `recall check` runs SQLite's structural
+  integrity check, the FTS5 integrity-check, and the engine-level
+  invariants (no orphan embeddings, vec0 sync, valid lifecycle
+  statuses) — read-only, scriptable exit code.
+
 ## Roadmap
 
 | Phase | Status | What |
@@ -127,7 +171,7 @@ See [docs/development/README.md](docs/development/README.md) for the full workfl
 | 3 — Semantic Search | done | Local embeddings (MiniLM via fastembed), sqlite-vec, hybrid RRF search, eval harness |
 | 4 — Shell & Git Integration | done | Prompt-hook failure capture (PowerShell/Bash), post-commit git hook, secret redaction |
 | 5 — Projects & Lifecycle | done | Project-aware search + `recall projects`, archive/unarchive/delete, portable JSON export/import, pre-migration backup |
-| 6 — Hardening | planned | <100ms @ 10k entries, redaction, encryption at rest |
+| 6 — Hardening | done | Benchmarks at 10k/50k/100k (percentiles), concurrency + crash/recovery suites, migration hardening, `recall check`, secret-pattern review, encryption-at-rest decision (rejected, ADR-0026), CI zero-network guard |
 | 7 — Ecosystem & Release | planned | DeployScore incident feed, CI failure capture |
 
 ## License

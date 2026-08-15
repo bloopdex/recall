@@ -98,10 +98,17 @@ pub fn export(db: &Db, path: Option<&Path>, include_secrets: bool) -> Result<()>
 
 pub fn import(db: &mut Db, path: &Path, force: bool) -> Result<()> {
     let raw = std::fs::read_to_string(path).map_err(|e| {
-        Error::Io(std::io::Error::other(format!(
-            "cannot read {}: {e}",
-            path.display()
-        )))
+        if e.kind() == std::io::ErrorKind::InvalidData {
+            Error::InvalidInput(format!(
+                "not a valid Recall export: {} is not UTF-8 text",
+                path.display()
+            ))
+        } else {
+            Error::Io(std::io::Error::other(format!(
+                "cannot read {}: {e}",
+                path.display()
+            )))
+        }
     })?;
     let file: ExportFile = serde_json::from_str(&raw)
         .map_err(|e| Error::InvalidInput(format!("not a valid Recall export: {e}")))?;
@@ -111,13 +118,36 @@ pub fn import(db: &mut Db, path: &Path, force: bool) -> Result<()> {
             file.format_version
         )));
     }
+    // Phase 6: an export produced by a NEWER Recall may carry fields this
+    // build does not know — serde would silently drop them. Refuse instead
+    // of importing a lossy copy.
+    let current_schema = db.schema_version()?;
+    if file.recall_schema_version > current_schema {
+        return Err(Error::InvalidInput(format!(
+            "this export was produced by a newer Recall (schema v{}) than this \
+             build (schema v{current_schema}); upgrade Recall before importing",
+            file.recall_schema_version
+        )));
+    }
 
-    // Validate every entry before inserting anything (all-or-nothing).
+    // Validate every entry before inserting anything (all-or-nothing):
+    // required fields, timestamps, and lifecycle status. A bad entry ANY
+    // WHERE in the file must abort with zero rows inserted.
     for (i, entry) in file.memories.iter().enumerate() {
         if entry.problem.trim().is_empty() || entry.solution.trim().is_empty() {
             return Err(Error::InvalidInput(format!(
                 "export entry #{} is missing a required field (problem/solution)",
                 i + 1
+            )));
+        }
+        if let Err(e) = parse_timestamp(&entry.captured_at) {
+            return Err(Error::InvalidInput(format!("export entry #{}: {e}", i + 1)));
+        }
+        if entry.status != "active" && entry.status != "archived" {
+            return Err(Error::InvalidInput(format!(
+                "export entry #{} has an unknown lifecycle status {:?}",
+                i + 1,
+                entry.status
             )));
         }
     }

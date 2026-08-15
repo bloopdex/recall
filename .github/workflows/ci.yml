@@ -31,5 +31,10 @@ jobs:
       - name: Tests
         run: cargo test --all-targets
 
+      - name: Zero-network guard (opt-in download feature still builds)
+        # The full dependency-tree scan runs inside `cargo test` (tests/security.rs);
+        # this step additionally proves the gated network build compiles.
+        run: cargo build --features download
+
       - name: Release build
         run: cargo build --release

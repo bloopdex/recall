@@ -46,7 +46,9 @@ pub enum CaptureOutcome {
     Declined { reason: String },
 }
 
-#[instrument(skip(db, cwd))]
+// `args` is skipped: CaptureArgs carries the raw problem/solution text and
+// must never appear in logs (Phase 6 log-data policy).
+#[instrument(skip(db, cwd, args))]
 pub fn run(db: &mut Db, args: &CaptureArgs, cwd: &Path) -> Result<CaptureOutcome> {
     let stdin_is_tty = std::io::stdin().is_terminal();
     run_with_io(

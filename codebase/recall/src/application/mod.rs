@@ -1,6 +1,7 @@
 //! Application layer — composes domain + infrastructure into workflows.
 
 pub mod capture;
+pub mod check;
 pub mod edit;
 pub mod embeddings;
 pub mod git_hooks;

@@ -107,10 +107,33 @@ pub struct ProjectStat {
 }
 
 /// Handle to the Recall database.
+#[derive(Debug)]
 pub struct Db {
     conn: Connection,
     /// Whether the sqlite-vec extension loaded and `embeddings_vec` exists.
     vec_enabled: bool,
+}
+
+/// Phase 6: corruption at open time gets the recovery model in the
+/// message (restore the pre-migration backup, or re-import from a Recall
+/// export). The damaged file itself is never touched.
+///
+/// SQLite opens files lazily, so a corrupt file can surface the
+/// NotADatabase/Corrupt codes either at `Connection::open` or at the
+/// first statement — both paths are mapped here.
+fn map_open_failure(e: rusqlite::Error) -> crate::Error {
+    if let rusqlite::Error::SqliteFailure(err, msg) = &e {
+        let code = err.code;
+        if code == rusqlite::ErrorCode::NotADatabase || code == rusqlite::ErrorCode::DatabaseCorrupt
+        {
+            return crate::Error::DbCorrupt(format!(
+                "{} (sqlite error code {:?})",
+                msg.as_deref().unwrap_or("unknown"),
+                code
+            ));
+        }
+    }
+    crate::Error::Db(e)
 }
 
 impl Db {
@@ -130,8 +153,11 @@ impl Db {
         // MUST run before the connection is created: rusqlite applies
         // auto-registered extensions only to new connections.
         register_vec_extension();
-        let conn = Connection::open(path)?;
-        Self::from_connection(conn, true)
+        let conn = Connection::open(path).map_err(map_open_failure)?;
+        Self::from_connection(conn, true).map_err(|e| match e {
+            crate::Error::Db(inner) => map_open_failure(inner),
+            other => other,
+        })
     }
 
     /// In-memory database, used by unit tests.
@@ -140,6 +166,15 @@ impl Db {
         register_vec_extension();
         let conn = Connection::open_in_memory()?;
         Self::from_connection(conn, false)
+    }
+
+    /// Run a closure over the underlying SQLite connection (Phase 6).
+    /// Scoped read access keeps write paths (transactions, triggers)
+    /// inside the persistence layer while letting diagnostics (`recall
+    /// check`), tests, and benchmarks run raw SQL. rusqlite's `execute`
+    /// methods take `&self`, so the closure can still start transactions.
+    pub fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+        f(&self.conn)
     }
 
     fn from_connection(mut conn: Connection, file_backed: bool) -> Result<Self> {
