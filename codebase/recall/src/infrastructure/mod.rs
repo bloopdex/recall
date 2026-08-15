@@ -3,6 +3,7 @@
 //! The domain model has no knowledge of these modules; the application
 //! layer composes them.
 
+pub mod ci;
 pub mod database;
 pub mod embeddings;
 pub mod git;

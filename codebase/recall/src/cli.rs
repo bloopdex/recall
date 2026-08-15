@@ -93,6 +93,11 @@ pub enum Command {
     /// hints in the report.
     Check,
 
+    /// Print the four versioned surfaces: application, database schema,
+    /// export format, embedding model (ADR-0031). Does not create a
+    /// database.
+    Version,
+
     /// Move a memory out of active search (recoverable: `recall unarchive`).
     Archive {
         /// Id of the memory to archive.
@@ -252,14 +257,29 @@ pub struct CaptureArgs {
     /// Capture from the shell failure snapshot recorded by the prompt hook
     /// (`recall shell install`): pre-fills the problem with the failed
     /// command and its exit code. Piped stdin supplies the error output.
-    #[arg(long, conflicts_with = "from_git")]
+    #[arg(long, conflicts_with = "from_git", conflicts_with = "from_ci")]
     pub from_shell: bool,
 
     /// Capture after a commit (used by the post-commit hook): pre-fills
     /// the problem from the commit subject and records the commit's files.
     /// Skips silently when there is no interactive terminal.
-    #[arg(long, conflicts_with = "from_shell")]
+    #[arg(long, conflicts_with = "from_shell", conflicts_with = "from_ci")]
     pub from_git: bool,
+
+    /// Capture a CI failure (ADR-0030): runs inside an opt-in GitHub
+    /// Actions failure step (`if: failure()`). Pre-fills the problem from
+    /// the whitelisted GITHUB_* environment (workflow/job/event — no run
+    /// id, so repeated failures deduplicate); piped stdin supplies the
+    /// log tail as the error. A `--solution` is REQUIRED — Recall stores
+    /// fixes, not raw CI events. Secret-like log content fails closed in
+    /// CI (nothing is stored unless it passes sanitization).
+    #[arg(long, conflicts_with = "from_shell", conflicts_with = "from_git")]
+    pub from_ci: bool,
+
+    /// Label of the failing CI step, appended to the auto-built problem
+    /// (only meaningful with --from-ci).
+    #[arg(long, value_name = "NAME")]
+    pub step: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -397,6 +417,17 @@ pub fn run() -> anyhow::Result<()> {
             let config = Config::resolve(cli.db.clone())?;
             let db = Db::open(&config.db_path)?;
             application::check::run(&db)?;
+        }
+        Command::Version => {
+            let config = Config::resolve(cli.db.clone())?;
+            // Read-only: only open the database when it already exists.
+            let schema = if config.db_path.exists() {
+                let db = Db::open(&config.db_path)?;
+                Some(db.schema_version()?)
+            } else {
+                None
+            };
+            application::version::run(schema)?;
         }
         Command::Archive { id } => {
             let config = Config::resolve(cli.db.clone())?;

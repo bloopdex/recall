@@ -79,7 +79,65 @@ recall delete --project old-stack --yes        # bulk, confirmed
 recall export --path backup.json
 recall export --include-secrets --path raw.json   # explicit opt-in
 recall import backup.json                          # duplicates skipped
+
+# Integrity + versioning
+recall check        # read-only consistency checks (never repairs)
+recall version      # app / schema / export-format / model versions
 ```
+
+### CI failure capture (opt-in)
+
+A GitHub Actions failure step pipes a bounded log tail into Recall and
+names the remediation — see [docs/ci/github-actions.md](docs/ci/github-actions.md):
+
+```yaml
+- name: Capture failure in Recall
+  if: failure()
+  run: |
+    tail -n 100 build.log | recall capture --from-ci \
+      --step build --solution "re-run: this job flakes on cold caches"
+```
+
+## Installation
+
+Release bundles contain the binary, checksums, and the install scripts
+(see [docs/release/RELEASE-CHECKLIST.md](docs/release/RELEASE-CHECKLIST.md)
+and the Source of Truth for the current release state):
+
+```powershell
+# Windows: from a release bundle directory (checksums verified)
+powershell -File install.ps1 -From dist\recall-1.0.0-windows-x86_64
+```
+
+```bash
+# Linux/macOS: from the per-OS build's release directory
+sh install.sh /path/to/release-dir
+```
+
+Or build from source: `cargo install --path codebase/recall` (add
+`--features download` if you want the model downloader).
+
+The install script copies the binary into a user bin directory
+(`~/.recall/bin` by default), verifies the SHA256 checksums when
+present, and prints PATH guidance. It never touches PATH, shell
+profiles, integrations, your database, or the model — those are
+separate, explicit steps (`recall shell install`, `recall git install`,
+`recall embeddings download`).
+
+### Uninstall
+
+Four separate, explicit actions — an uninstall never deletes your
+memories:
+
+1. delete the installed binary (`~/.recall/bin/recall` or wherever it
+   was installed);
+2. `recall shell uninstall` — removes the prompt-hook block from your
+   shell profile;
+3. `recall git install`'s counterpart: `recall git uninstall` in each
+   repository (user hook content is preserved);
+4. only if you truly want to: delete the database file and the model
+   directory yourself (`recall` never deletes them). Back up first:
+   `recall export --path backup.json`.
 
 ## How it works
 
@@ -94,15 +152,15 @@ recall import backup.json                          # duplicates skipped
 ## Project structure
 
 ```
-docs/                  architecture, database, design, development, ADRs
+docs/                  architecture, database, design, development, ci, release, ADRs
 codebase/recall/       the Rust crate (lib + bin)
-  src/                 cli / application / domain / infrastructure (database, git)
+  src/                 cli / application / domain / infrastructure (database, git, shell, ci)
   migrations (sql)     embedded SQLite migrations
-  tests/               CLI, database, git, failure, and security tests
-  examples/            bench_search (repeatable 10k-entry baseline)
-scripts/               benchmark + zero-network guard
-fixtures/              example entries from the Phase 0 design
-.github/workflows/     CI (Windows + Linux: fmt, clippy, tests, release build)
+  tests/               CLI, database, git, failure, security, concurrency, crash, upgrade tests
+  examples/            bench_search / bench_projects / bench_phase6 (repeatable baselines)
+scripts/               install scripts, release bundle script, benchmark + zero-network guard
+fixtures/              example entries + upgrade fixtures (old-export compatibility)
+.github/workflows/     CI (Windows + Linux: fmt, clippy, tests, download build, release build)
 ```
 
 ## Development
@@ -116,6 +174,27 @@ cargo run --release --example bench_search
 ```
 
 See [docs/development/README.md](docs/development/README.md) for the full workflow and [docs/adr/](docs/adr/) for architecture decisions.
+
+## Troubleshooting
+
+- **"database file is corrupt or not a Recall database"** — Recall never
+  modifies a damaged file. Diagnose with `recall check`; recover by
+  restoring `<db>.pre-migration-backup` (taken before each schema
+  upgrade) or re-importing `recall export` output, then
+  `recall embeddings build`. Full recovery model: docs/database/README.md.
+- **Semantic search missing / "embedding model not found"** —
+  `recall embeddings status`, then `recall embeddings download` (the
+  only network command) and `recall embeddings build`. Keyword search
+  works regardless.
+- **Capture says "Skipped: near-identical memory"** — deduplication
+  working as designed; `--force` captures anyway.
+- **Shell/git hook misbehaving** — `recall shell status` /
+  `recall git status`; uninstall removes only Recall's marked blocks.
+  A commit can never be blocked by Recall (the hook runs after, and
+  skips without a terminal).
+- **CI capture stored nothing and printed "Not saved"** — a
+  secret-like pattern was detected in the piped log; CI fails closed
+  by design. Sanitize the step's input (see docs/ci/github-actions.md).
 
 ## Security model
 
@@ -172,7 +251,7 @@ What is encrypted, what is redacted, what never leaves the machine
 | 4 — Shell & Git Integration | done | Prompt-hook failure capture (PowerShell/Bash), post-commit git hook, secret redaction |
 | 5 — Projects & Lifecycle | done | Project-aware search + `recall projects`, archive/unarchive/delete, portable JSON export/import, pre-migration backup |
 | 6 — Hardening | done | Benchmarks at 10k/50k/100k (percentiles), concurrency + crash/recovery suites, migration hardening, `recall check`, secret-pattern review, encryption-at-rest decision (rejected, ADR-0026), CI zero-network guard |
-| 7 — Ecosystem & Release | planned | DeployScore incident feed, CI failure capture |
+| 7 — Ecosystem & Release | done | v1.0.0: `--from-ci` failure capture (opt-in, fail-closed), `recall version`, install scripts + checksums, release bundle + checklist, upgrade fixtures; DeployScore feed deferred — no interface exists yet (ADR-0029) |
 
 ## License
 

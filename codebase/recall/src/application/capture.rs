@@ -10,10 +10,19 @@
 //! - `--from-git` runs after a commit (post-commit hook) and pre-fills
 //!   the problem from the commit subject, with the commit's changed files.
 //!
-//! In both modes the auto-captured text passes through the secret
+//! Phase 7 adds a third (ADR-0030):
+//!
+//! - `--from-ci` runs inside an opt-in GitHub Actions failure step
+//!   (`if: failure()`). The problem is built from the whitelisted
+//!   GITHUB_* environment; piped stdin carries the log tail as the
+//!   error. A `--solution` is REQUIRED — Recall stores fixes, not raw CI
+//!   events.
+//!
+//! In all context modes the auto-captured text passes through the secret
 //! sanitizer (ADR-0018): detected secrets are redacted, shown, and require
-//! explicit confirmation before anything is persisted. Problem + Solution
-//! remain the required fields (Phase 0/2 contract).
+//! explicit confirmation before anything is persisted. In non-interactive
+//! CI the gate fails closed (nothing stored). Problem + Solution remain
+//! the required fields (Phase 0/2 contract).
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
@@ -72,7 +81,7 @@ pub fn run_with_io(
     prompt_out: &mut dyn Write,
 ) -> Result<CaptureOutcome> {
     let stdin_is_piped = !stdin_is_tty;
-    let context_mode = args.from_shell || args.from_git;
+    let context_mode = args.from_shell || args.from_git || args.from_ci;
 
     let git = GitContext::detect(cwd);
     let commit = if args.from_git {
@@ -118,6 +127,31 @@ pub fn run_with_io(
             .map(sanitize::sanitize)
             .map(|s| s.sanitized)
             .map(|subject| format!("Fix in {project}: {subject}"))
+    } else if args.from_ci {
+        // Deterministic problem text from workflow/job/event/step — the
+        // run id is deliberately NOT part of it, so repeated failures of
+        // the same job deduplicate (ADR-0011).
+        let snap = crate::infrastructure::ci::read_snapshot()?;
+        let step = args
+            .step
+            .as_deref()
+            .map(|s| format!(" / step {s}"))
+            .unwrap_or_default();
+        Some(format!(
+            "CI failure in {}{}{}{}",
+            snap.workflow,
+            if snap.job.is_empty() {
+                String::new()
+            } else {
+                format!(" / {}", snap.job)
+            },
+            step,
+            if snap.event.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", snap.event)
+            }
+        ))
     } else {
         None
     };
@@ -206,13 +240,68 @@ pub fn run_with_io(
         prompt_line("Solution", input, prompt_out)?
     };
 
-    let project = args.project.clone().or_else(|| detect_project(cwd, &git));
+    let project = args
+        .project
+        .clone()
+        .or_else(|| {
+            // In CI the authoritative project identity is GITHUB_REPOSITORY's
+            // repo name (ADR-0021/0030); fall back to local git detection.
+            if args.from_ci {
+                crate::infrastructure::ci::read_snapshot()
+                    .ok()
+                    .and_then(|s| s.repository)
+                    .and_then(|r| {
+                        crate::infrastructure::ci::repository_name(&r).map(|name| name.to_string())
+                    })
+            } else {
+                None
+            }
+        })
+        .or_else(|| detect_project(cwd, &git));
+
+    // In CI, attach the run metadata to the context field (visible, and
+    // deliberately NOT part of dedup — the deterministic problem text
+    // carries deduplication).
+    let context = if args.from_ci {
+        args.context.clone().or_else(|| {
+            let snap = crate::infrastructure::ci::read_snapshot().ok()?;
+            let run = snap
+                .run_id
+                .clone()
+                .map(|id| {
+                    format!(
+                        "run {}{}",
+                        id,
+                        snap.run_attempt
+                            .as_deref()
+                            .map(|a| format!(" (attempt {a})"))
+                            .unwrap_or_default()
+                    )
+                })
+                .unwrap_or_default();
+            let location = [snap.ref_name, snap.sha]
+                .into_iter()
+                .flatten()
+                .filter(|v| !v.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(
+                [run, location]
+                    .into_iter()
+                    .filter(|v| !v.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        })
+    } else {
+        args.context.clone()
+    };
 
     let memory = NewMemory {
         problem,
         solution,
         error: error_report.as_ref().map(|r| r.sanitized.clone()),
-        context: args.context.clone(),
+        context,
         investigation: args.investigation.clone(),
         root_cause: args.root_cause.clone(),
         verification: args.verification.clone(),

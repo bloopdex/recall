@@ -190,6 +190,37 @@ fn full_dependency_tree_contains_no_network_crates() {
     }
 }
 
+/// Phase 7 (ADR-0030): `infrastructure/ci.rs` may read ONLY the
+/// whitelisted GitHub Actions variables below — never arbitrary CI
+/// environment (which routinely contains tokens and cloud credentials).
+#[test]
+fn ci_integration_reads_only_whitelisted_environment_variables() {
+    const ALLOWED: &[&str] = &[
+        "GITHUB_WORKFLOW",
+        "GITHUB_JOB",
+        "GITHUB_EVENT_NAME",
+        "GITHUB_REPOSITORY",
+        "GITHUB_SHA",
+        "GITHUB_REF_NAME",
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_SERVER_URL",
+        "RUNNER_OS",
+    ];
+    let source = std::fs::read_to_string("src/infrastructure/ci.rs").unwrap();
+    for line in source.lines() {
+        let Some(pos) = line.find("env(\"") else {
+            continue;
+        };
+        let rest = &line[pos + "env(\"".len()..];
+        let name = rest.split('"').next().unwrap_or("");
+        assert!(
+            ALLOWED.contains(&name),
+            "ci.rs reads environment variable '{name}' outside the Phase 7 whitelist"
+        );
+    }
+}
+
 /// ADR-0010 amendment (Phase 4): the ONLY module allowed to read
 /// environment variables is `infrastructure/shell.rs`, and it may read
 /// exactly the whitelist below — the three snapshot variables written by

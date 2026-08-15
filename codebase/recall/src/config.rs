@@ -61,17 +61,18 @@ fn default_db_path() -> Result<PathBuf> {
 mod tests {
     use super::*;
 
+    /// Both precedence assertions share one test: `RECALL_DB_PATH` is
+    /// process-global, and two parallel tests mutating it race (a flake
+    /// found during Phase 7 validation — same fix pattern as the Phase 4
+    /// shell-env tests).
     #[test]
-    fn explicit_flag_wins_over_env() {
+    fn db_path_precedence_and_validation_are_sequential() {
         // `--db` flag has highest precedence.
         std::env::set_var(ENV_DB_PATH, "C:\\fake\\env.db");
         let cfg = Config::resolve(Some(PathBuf::from("C:\\fake\\flag.db"))).unwrap();
         assert_eq!(cfg.db_path, PathBuf::from("C:\\fake\\flag.db"));
-        std::env::remove_var(ENV_DB_PATH);
-    }
 
-    #[test]
-    fn empty_env_value_is_a_config_error() {
+        // An env var that is set but empty is a configuration error.
         std::env::set_var(ENV_DB_PATH, "  ");
         let err = Config::resolve(None).unwrap_err();
         assert!(matches!(err, Error::Config(_)));

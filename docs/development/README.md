@@ -59,3 +59,15 @@ Install it once with: `cargo run --features download -- embeddings download`.
 No networking crates may enter the dependency tree
 (`scripts/check_no_network.ps1` + `tests/security.rs` enforce this). The
 binary's only external interaction is spawning `git` for metadata.
+
+## Releasing
+
+Versioning (ADR-0031): SemVer for the app (`recall version` shows the
+four independent surfaces — app, database schema, export format,
+embedding model). The reproducible release procedure is
+[docs/release/RELEASE-CHECKLIST.md](../release/RELEASE-CHECKLIST.md);
+the bundle script is `scripts/release.ps1 -Version <version>`. CI
+integration behavior is pinned by `tests/ci_capture.rs` and documented
+in [docs/ci/github-actions.md](../ci/github-actions.md); upgrade
+compatibility is pinned by `tests/upgrade_paths.rs` against the
+committed fixtures.
