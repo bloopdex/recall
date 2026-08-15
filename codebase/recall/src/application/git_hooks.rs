@@ -20,12 +20,22 @@ pub fn run(command: &GitCommand) -> Result<()> {
 
 fn install(cwd: &std::path::Path, append: bool) -> Result<()> {
     match git::install_hook(cwd, HOOK_NAME, append)? {
-        git::InstallOutcome::Installed(path) => println!(
-            "Installed: recall post-commit hook written to {} — after each commit, recall offers to capture the fix. Remove with `recall git uninstall`.",
-            path.display()
-        ),
+        git::InstallOutcome::Installed(path) => {
+            println!(
+                "{}Installed: recall post-commit hook written to {} — after each commit, recall offers to capture the fix. Remove with `recall git uninstall`.",
+                crate::ui::ok(),
+                path.display()
+            );
+            if crate::ui::pretty() {
+                println!(
+                    "{}Make a fix commit — the hook will offer to capture it",
+                    crate::ui::arrow()
+                );
+            }
+        }
         git::InstallOutcome::Appended(path) => println!(
-            "Appended: recall block added to your existing hook at {} (your content is preserved).",
+            "{}Appended: recall block added to your existing hook at {} (your content is preserved).",
+            crate::ui::ok(),
             path.display()
         ),
         git::InstallOutcome::AlreadyInstalled(path) => println!(
@@ -38,7 +48,10 @@ fn install(cwd: &std::path::Path, append: bool) -> Result<()> {
 
 fn uninstall(cwd: &std::path::Path) -> Result<()> {
     match git::uninstall_hook(cwd, HOOK_NAME)? {
-        true => println!("Uninstalled: recall hook removed (any user hook content was preserved)."),
+        true => println!(
+            "{}Uninstalled: recall hook removed (any user hook content was preserved).",
+            crate::ui::ok()
+        ),
         false => println!("Not installed: no recall hook found in this repository."),
     }
     Ok(())

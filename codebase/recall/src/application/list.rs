@@ -15,7 +15,21 @@ pub fn run(db: &Db, limit: usize, filter: &SearchFilter) -> Result<()> {
     let memories = db.list_memories_filtered(filter, limit)?;
     if memories.is_empty() {
         println!("No memories found (try --archived to see archived ones).");
+        if crate::ui::pretty() {
+            println!(
+                "{}capture something first: recall capture",
+                crate::ui::tip()
+            );
+        }
         return Ok(());
+    }
+    if crate::ui::pretty() {
+        println!(
+            "{}{} recent memories (newest first)",
+            crate::ui::storage(),
+            memories.len()
+        );
+        println!();
     }
     for m in &memories {
         let project = m.project.as_deref().unwrap_or("-");

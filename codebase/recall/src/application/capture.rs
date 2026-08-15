@@ -84,6 +84,9 @@ pub fn run_with_io(
 ) -> Result<CaptureOutcome> {
     let stdin_is_piped = !stdin_is_tty;
     let context_mode = args.from_shell || args.from_git || args.from_ci;
+    // Interactive capture gets the friendly two-line prompt ("Problem"
+    // then an arrow); everything else keeps the compact plain form.
+    let pretty_prompts = stdin_is_tty && crate::ui::pretty();
 
     let git = GitContext::detect(cwd);
     let commit = if args.from_git {
@@ -188,7 +191,8 @@ pub fn run_with_io(
         if redactions > 0 {
             writeln!(
                 prompt_out,
-                "Warning: {redactions} secret-like pattern(s) detected in the captured context and redacted."
+                "{}Warning: {redactions} secret-like pattern(s) detected in the captured context and redacted.",
+                crate::ui::warn()
             )?;
             if let Some(p) = &prefill {
                 writeln!(prompt_out, "  Problem will be: {p}")?;
@@ -223,7 +227,7 @@ pub fn run_with_io(
             }
         },
         (None, None) if stdin_is_piped || args.stdin => read_stdin(input)?,
-        (None, None) => prompt_line("Problem", input, prompt_out)?,
+        (None, None) => prompt_line("Problem", pretty_prompts, input, prompt_out)?,
     };
 
     // 5. Solution: --solution flag wins; piped stdin has already been
@@ -240,7 +244,7 @@ pub fn run_with_io(
             "stdin provides the error output; give the solution with --solution".into(),
         ));
     } else {
-        prompt_line("Solution", input, prompt_out)?
+        prompt_line("Solution", pretty_prompts, input, prompt_out)?
     };
 
     let project = args
@@ -430,8 +434,22 @@ fn confirm(prompt_out: &mut dyn Write, input: &mut dyn BufRead, question: &str) 
 
 /// Where the problem text comes from in plain (non-context) capture:
 /// `--problem` flag > stdin (piped input or explicit `--stdin`) > prompt.
-fn prompt_line(field: &str, input: &mut dyn BufRead, prompt_out: &mut dyn Write) -> Result<String> {
-    write!(prompt_out, "{field}: ")?;
+///
+/// `pretty` switches the prompt to the friendly two-line form
+/// ("Problem" on its own line, answer after an arrow) used only for
+/// interactive terminals; piped prompts keep the compact `Field: ` form.
+fn prompt_line(
+    field: &str,
+    pretty: bool,
+    input: &mut dyn BufRead,
+    prompt_out: &mut dyn Write,
+) -> Result<String> {
+    if pretty {
+        writeln!(prompt_out, "{field}")?;
+        write!(prompt_out, "{} ", crate::ui::arrow())?;
+    } else {
+        write!(prompt_out, "{field}: ")?;
+    }
     prompt_out.flush()?;
     let mut line = String::new();
     input.read_line(&mut line)?;
@@ -505,9 +523,27 @@ mod tests {
     fn prompt_writes_prompt_and_reads_line() {
         let mut input = lines("typed problem\n");
         let mut out = Vec::new();
-        let got = prompt_line("Problem", &mut input, &mut out).unwrap();
+        let got = prompt_line("Problem", false, &mut input, &mut out).unwrap();
         assert_eq!(got, "typed problem\n");
         assert_eq!(String::from_utf8(out).unwrap(), "Problem: ");
+    }
+
+    #[test]
+    fn pretty_prompt_uses_the_two_line_form() {
+        let mut input = lines("typed problem\n");
+        let mut out = Vec::new();
+        let got = prompt_line("Problem", true, &mut input, &mut out).unwrap();
+        assert_eq!(got, "typed problem\n");
+        let out = String::from_utf8(out).unwrap();
+        // The shape is pinned: the field on its own line, the answer
+        // line after an arrow. The arrow glyph itself is environment-
+        // dependent (fancy terminal vs plain output).
+        assert!(out.starts_with("Problem\n"), "{out:?}");
+        assert_eq!(out.lines().count(), 2, "two lines: {out:?}");
+        assert!(
+            out.lines().nth(1).unwrap().ends_with(' '),
+            "answer line waits after the arrow: {out:?}"
+        );
     }
 
     #[test]

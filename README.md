@@ -4,14 +4,31 @@
 
 ```
 $ recall search "postgres connection pool"
-#1  rank -6.42  captured 2026-08-14 15:30  id 42
-    project: thorn-api
-    commit:  a1b2c3d
-    problem:  PostgreSQL connection pool exhaustion on checkout-service
-    solution: Raised max_connections and enabled pgbouncer transaction pooling
+
+🔍 2 result(s) for "postgres connection pool"
+
+1. PostgreSQL connection pool exhaustion on checkout-service
+   📁 thorn-api  🕒 2026-08-14 15:30  id 42  commit a1b2c3d
+   solution: Raised max_connections and enabled pgbouncer transaction pooling
+
+2. ...
 ```
 
 Everything stays on your machine: no network, no telemetry, no cloud.
+
+### First run
+
+The first command that creates your database greets you with a short
+welcome: what Recall is, where your data lives, and the three commands
+that matter. It prints once, only in a real terminal, and never blocks
+or prompts — scripts and CI see nothing.
+
+### Symbols
+
+Interactive terminals get a small set of consistent icons (🧠 ✓ ✗ ⚠ →
+🔒 🔍 💾 🌿 🖥 ⚙ 💡 📁 🕒). Piped output and scripts always get plain
+ASCII instead — and `RECALL_PLAIN=1` forces plain output everywhere,
+for terminals without unicode fonts.
 
 ## Quick start
 
@@ -36,7 +53,7 @@ recall edit 42 --solution "set busy_timeout 5000" --error ""   # empty clears
 
 # Search past solutions (hybrid: FTS5 keyword + local semantic search)
 recall search "postgres connection pool"
-recall search --explain "postgres connection pool"   # show ranking signals
+recall search --explain "postgres connection pool"   # ranking signals per result
 
 # Semantic layer setup (one-time, the ONLY network step)
 cargo install --path codebase/recall --features download   # build with download support
@@ -118,10 +135,11 @@ Or build from source: `cargo install --path codebase/recall` (add
 
 The install script copies the binary into a user bin directory
 (`~/.recall/bin` by default), verifies the SHA256 checksums when
-present, and prints PATH guidance. It never touches PATH, shell
-profiles, integrations, your database, or the model — those are
-separate, explicit steps (`recall shell install`, `recall git install`,
-`recall embeddings download`).
+present, then prints exactly what changed (one copied binary), how to
+verify it (`recall version`), PATH guidance, and the next step. It
+never touches PATH, shell profiles, integrations, your database, or the
+model — those are separate, explicit steps (`recall shell install`,
+`recall git install`, `recall embeddings download`).
 
 ### Uninstall
 
@@ -172,7 +190,7 @@ cargo test
 cargo run --release --example bench_search
 ```
 
-See [docs/development/README.md](docs/development/README.md) for the full workflow and [docs/adr/](docs/adr/) for architecture decisions.
+See [docs/development/README.md](docs/development/README.md) for the full workflow, [docs/development/DOGFOODING.md](docs/development/DOGFOODING.md) for the post-release dogfooding guide, and [docs/adr/](docs/adr/) for architecture decisions.
 
 ## Troubleshooting
 

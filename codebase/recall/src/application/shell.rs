@@ -27,10 +27,19 @@ fn init(shell: Shell) -> Result<()> {
 fn install(shell: Shell) -> Result<()> {
     let path = shell::startup_file(shell)?;
     match shell::install_into(&path, shell::snippet_for(shell))? {
-        true => println!(
-            "Installed: recall shell integration added to {} (start a new {shell} session to activate).",
-            path.display()
-        ),
+        true => {
+            println!(
+                "{}Installed: recall shell integration added to {} (start a new {shell} session to activate).",
+                crate::ui::ok(),
+                path.display()
+            );
+            if crate::ui::pretty() {
+                println!(
+                    "{}After your next failed command: recall capture --from-shell",
+                    crate::ui::arrow()
+                );
+            }
+        }
         false => println!(
             "Already installed: the recall block is present in {}.",
             path.display()
@@ -43,7 +52,8 @@ fn uninstall(shell: Shell) -> Result<()> {
     let path = shell::startup_file(shell)?;
     match shell::uninstall_from(&path)? {
         true => println!(
-            "Uninstalled: recall shell integration removed from {} (existing content preserved).",
+            "{}Uninstalled: recall shell integration removed from {} (existing content preserved).",
+            crate::ui::ok(),
             path.display()
         ),
         false => println!(

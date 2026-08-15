@@ -13,6 +13,10 @@ pub fn run(db: &Db, cwd: &std::path::Path) -> Result<()> {
         println!("No memories yet — capture something first (`recall capture`).");
         return Ok(());
     }
+    if crate::ui::pretty() {
+        println!("{}{} project(s)", crate::ui::folder(), stats.len());
+        println!();
+    }
 
     let git = GitContext::detect(cwd);
     let current = detect_project(cwd, &git);

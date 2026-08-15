@@ -86,7 +86,8 @@ pub fn export(db: &Db, path: Option<&Path>, include_secrets: bool) -> Result<()>
         Some(path) => {
             std::fs::write(path, format!("{json}\n")).map_err(Error::Io)?;
             println!(
-                "Exported {} memories to {}",
+                "{}Exported {} memories to {}",
+                crate::ui::ok(),
                 file.memories.len(),
                 path.display()
             );
@@ -200,7 +201,8 @@ pub fn import(db: &mut Db, path: &Path, force: bool) -> Result<()> {
         imported += 1;
     }
     println!(
-        "Imported {imported} memories, skipped {skipped} duplicate(s). Embeddings are rebuilt locally: run `recall embeddings build` to index the imported memories."
+        "{}Imported {imported} memories, skipped {skipped} duplicate(s). Embeddings are rebuilt locally: run `recall embeddings build` to index the imported memories.",
+        crate::ui::ok()
     );
     Ok(())
 }

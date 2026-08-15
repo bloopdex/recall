@@ -10,7 +10,7 @@ use crate::Result;
 /// exists yet (the command does not create one — informational commands
 /// must not have write side effects).
 pub fn run(schema_version: Option<i64>) -> Result<()> {
-    println!("recall {}", env!("CARGO_PKG_VERSION"));
+    println!("{}recall {}", crate::ui::brain(), env!("CARGO_PKG_VERSION"));
     match schema_version {
         Some(v) => println!("database schema: v{v}"),
         None => println!("database schema: n/a (no database yet)"),

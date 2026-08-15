@@ -47,29 +47,48 @@ pub fn run(db: &Db, query: &str, limit: usize, explain: bool, filter: &SearchFil
         search_duration_ms = duration_ms,
     );
 
+    let pretty = crate::ui::pretty();
+
     if hits.is_empty() {
         println!("No results for \"{query}\".");
+        if pretty {
+            println!(
+                "{}capture this problem now and it becomes searchable: recall capture",
+                crate::ui::tip()
+            );
+        }
         return Ok(());
     }
 
+    if pretty {
+        println!();
+        println!(
+            "{}{} result(s) for \"{query}\"",
+            crate::ui::search(),
+            hits.len()
+        );
+        println!();
+    }
     for (i, hit) in hits.iter().enumerate() {
-        print_hit(i + 1, hit, explain);
+        print_hit(i + 1, hit, explain, pretty);
+    }
+    if pretty {
+        println!(
+            "{}recall edit <id> refines a memory — --explain shows the ranking details.",
+            crate::ui::tip()
+        );
+        println!();
     }
     Ok(())
 }
 
-/// Print one result: rank, problem, solution, project, git commit and
-/// capture time — enough to judge usefulness at a glance. `--explain`
-/// adds the per-engine ranking signals behind the fused score.
-fn print_hit(number: usize, hit: &HybridHit, explain: bool) {
+/// Print one result: enough to judge usefulness at a glance (problem,
+/// project, capture time, solution, error). Ranking data appears only
+/// with `--explain`. On a terminal the same information is laid out
+/// with icons; piped output keeps the compact plain form.
+fn print_hit(number: usize, hit: &HybridHit, explain: bool, pretty: bool) {
     let m: &Memory = &hit.memory;
-    println!(
-        "#{number}  fused {:.4}  captured {}  id {}",
-        hit.fused_score,
-        m.captured_at_local(),
-        m.id
-    );
-    if explain {
+    let signals = || {
         let fts = hit
             .fts_rank
             .map(|r| format!("{r:.4}"))
@@ -78,23 +97,55 @@ fn print_hit(number: usize, hit: &HybridHit, explain: bool) {
             .sem_similarity
             .map(|s| format!("{s:.3}"))
             .unwrap_or_else(|| "-".to_string());
-        println!("    signals: fts_rank={fts}, semantic_sim={sem}");
+        format!(
+            "signals: fused={:.4}, fts_rank={fts}, semantic_sim={sem}",
+            hit.fused_score
+        )
+    };
+    if pretty {
+        println!("{}. {}", number, first_line_str(&m.problem));
+        let mut meta = Vec::new();
+        if let Some(project) = &m.project {
+            meta.push(format!("{}{project}", crate::ui::folder()));
+        }
+        meta.push(format!("{}{}", crate::ui::clock(), m.captured_at_local()));
+        meta.push(format!("id {}", m.id));
+        if let Some(commit) = &m.git_commit {
+            meta.push(format!("commit {commit}"));
+        }
+        if m.status == MemoryStatus::Archived {
+            meta.push("archived".to_string());
+        }
+        println!("   {}", meta.join("  "));
+        if explain {
+            println!("    {}", signals());
+        }
+        if let Some(error) = first_line(&m.error) {
+            println!("    error:   {error}");
+        }
+        println!("    solution: {}", first_line_str(&m.solution));
+        println!();
+    } else {
+        println!("#{number}  captured {}  id {}", m.captured_at_local(), m.id);
+        if explain {
+            println!("    {}", signals());
+        }
+        if let Some(project) = &m.project {
+            println!("    project: {project}");
+        }
+        if m.status == MemoryStatus::Archived {
+            println!("    status:  archived");
+        }
+        if let Some(commit) = &m.git_commit {
+            println!("    commit:  {commit}");
+        }
+        if let Some(error) = first_line(&m.error) {
+            println!("    error:   {error}");
+        }
+        println!("    problem:  {}", first_line_str(&m.problem));
+        println!("    solution: {}", first_line_str(&m.solution));
+        println!();
     }
-    if let Some(project) = &m.project {
-        println!("    project: {project}");
-    }
-    if m.status == MemoryStatus::Archived {
-        println!("    status:  archived");
-    }
-    if let Some(commit) = &m.git_commit {
-        println!("    commit:  {commit}");
-    }
-    if let Some(error) = first_line(&m.error) {
-        println!("    error:   {error}");
-    }
-    println!("    problem:  {}", first_line_str(&m.problem));
-    println!("    solution: {}", first_line_str(&m.solution));
-    println!();
 }
 
 fn first_line(text: &Option<String>) -> Option<String> {

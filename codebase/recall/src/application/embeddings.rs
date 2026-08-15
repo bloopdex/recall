@@ -93,7 +93,14 @@ pub fn build(db: &mut Db) -> Result<()> {
         }
     }
 
-    println!("Embedded {done} memories, {failed} failures.");
+    println!(
+        "{}Embedded {done} memories, {failed} failures.",
+        if failed == 0 {
+            crate::ui::ok()
+        } else {
+            crate::ui::warn()
+        }
+    );
     if failed > 0 {
         println!("Re-run `recall embeddings build` to retry the failures.");
     }

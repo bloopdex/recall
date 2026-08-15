@@ -16,7 +16,8 @@ use crate::{Error, Result};
 pub fn set_status(db: &mut Db, id: i64, status: MemoryStatus) -> Result<()> {
     if db.set_status(id, status)? {
         println!(
-            "{} #{}",
+            "{}{} #{}",
+            crate::ui::ok(),
             match status {
                 MemoryStatus::Archived => "Archived",
                 MemoryStatus::Active => "Unarchived",
@@ -44,7 +45,8 @@ pub fn delete_one(
         .ok_or_else(|| Error::InvalidInput(format!("no memory with id {id}")))?;
     writeln!(
         prompt_out,
-        "Will delete: \"{}\" (project: {})",
+        "{}Will delete: \"{}\" (project: {})",
+        crate::ui::warn(),
         first_line(&memory.problem),
         memory.project.as_deref().unwrap_or("none")
     )?;
@@ -53,7 +55,10 @@ pub fn delete_one(
         return Ok(());
     }
     db.delete_memory(id)?;
-    println!("Deleted #{id} (embedding and search index entries removed with it).");
+    println!(
+        "{}Deleted #{id} (embedding and search index entries removed with it).",
+        crate::ui::ok()
+    );
     Ok(())
 }
 
@@ -84,7 +89,8 @@ pub fn delete_project(
     }
     writeln!(
         prompt_out,
-        "Will delete {count} memories from project \"{project}\"."
+        "{}Will delete {count} memories from project \"{project}\".",
+        crate::ui::warn()
     )?;
     if !confirmed(yes, stdin_is_tty, input, prompt_out)? {
         println!("Not deleted.");
@@ -92,7 +98,8 @@ pub fn delete_project(
     }
     let deleted = db.delete_memories_by_project(project)?;
     println!(
-        "Deleted {deleted} memories from project \"{project}\" (embeddings and index entries removed with them)."
+        "{}Deleted {deleted} memories from project \"{project}\" (embeddings and index entries removed with them).",
+        crate::ui::ok()
     );
     Ok(())
 }

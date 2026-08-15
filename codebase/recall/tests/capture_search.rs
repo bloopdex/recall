@@ -38,7 +38,27 @@ fn capture_then_search_roundtrip() {
     let text = stdout(&out);
     assert!(text.contains("checkout-service"), "project missing: {text}");
     assert!(text.contains("pooling"), "solution missing: {text}");
-    assert!(text.contains("fused"), "fused score missing: {text}");
+    // Ranking data is explain-only; default output stays readable.
+    assert!(
+        !text.contains("fused"),
+        "fused score must be hidden: {text}"
+    );
+    assert!(!text.contains('✓'), "piped output must stay plain: {text}");
+    assert!(!text.contains('→'), "piped output must stay plain: {text}");
+
+    // --explain exposes the per-engine ranking signals behind each hit.
+    let out = run(
+        &db,
+        None,
+        &["search", "--explain", "postgres connection pool"],
+        None,
+    );
+    assert!(out.status.success());
+    let text = stdout(&out);
+    assert!(
+        text.contains("fused") && text.contains("fts_rank") && text.contains("semantic_sim"),
+        "explain mode must show ranking signals: {text}"
+    );
 }
 
 #[test]

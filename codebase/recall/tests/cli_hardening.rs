@@ -222,3 +222,88 @@ fn logs_never_carry_memory_content_or_secrets() {
         stderr(&out)
     );
 }
+
+#[test]
+fn help_groups_commands_by_concept_and_stays_ascii() {
+    let (_dir, db) = temp_db_path();
+    let out = run(&db, &["--help"]);
+    assert_eq!(code(&out), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    for group in [
+        "Command groups:",
+        "capture, search, list",
+        "edit, archive, unarchive, delete",
+        "projects, export, import",
+        "shell, git",
+        "check, embeddings, version",
+        "RECALL_PLAIN",
+    ] {
+        assert!(text.contains(group), "help must document {group}: {text}");
+    }
+    // Help is decoration-free on every terminal: no icons, no arrows.
+    for icon in ['✓', '✗', '⚠', '→', '🧠', '🔒', '📁'] {
+        assert!(
+            !text.contains(icon),
+            "help must not carry icons ({icon}): {text}"
+        );
+    }
+}
+
+#[test]
+fn first_run_stays_quiet_when_piped() {
+    // The first-run welcome is an interactive-terminal experience only:
+    // scripts and CI that create the database on first use must see
+    // exactly the command's own output, no banner, no unicode.
+    let (_dir, db) = temp_db_path();
+    let out = run(
+        &db,
+        &[
+            "capture",
+            "--problem",
+            "first ever problem",
+            "--solution",
+            "first fix",
+        ],
+    );
+    assert_eq!(code(&out), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("Captured #1"), "{text}");
+    assert!(
+        !text.contains("Local-first"),
+        "banner leaked into piped output: {text}"
+    );
+    assert!(!text.contains("personal engineering memory"), "{text}");
+    assert!(text.is_ascii(), "piped output must stay ASCII: {text}");
+}
+
+#[test]
+fn plain_mode_is_the_default_for_pipes() {
+    // Every command below is piped here; decorations must never appear.
+    let (_dir, db) = temp_db_path();
+    let out = run(
+        &db,
+        &[
+            "capture",
+            "--problem",
+            "piped problem",
+            "--solution",
+            "piped fix",
+        ],
+    );
+    assert_eq!(code(&out), Some(0), "{}", stderr(&out));
+    for args in [
+        vec!["search", "piped problem"],
+        vec!["list"],
+        vec!["check"],
+        vec!["version"],
+        vec!["projects"],
+    ] {
+        let out = run(&db, &args);
+        assert_eq!(code(&out), Some(0), "{args:?}: {}", stderr(&out));
+        let text = stdout(&out);
+        assert!(
+            !text.contains('✓') && !text.contains('→') && !text.contains('🧠'),
+            "{args:?} leaked decorations into piped output: {text}"
+        );
+    }
+}

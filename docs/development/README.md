@@ -40,6 +40,12 @@ All tests use temp directories/databases; none depend on personal repo state.
 
 See [benchmarks.md](benchmarks.md).
 
+## Dogfooding
+
+The post-release dogfooding guide — daily workflow, evidence rules,
+bug-vs-behavior classification, and v1.1 criteria — lives in
+[DOGFOODING.md](DOGFOODING.md).
+
 - Search: `cargo run --release --example bench_search` (10k-entry FTS5,
   semantic, and hybrid baselines).
 - Full-scale: `cargo run --release --example bench_scale -- [size]`

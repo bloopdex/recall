@@ -15,10 +15,15 @@
 
 set -eu
 
+echo "Recall - local-first engineering memory"
+echo "Installing the recall binary ..."
+echo ""
+
 FROM="${1:-$(dirname "$0")}"
 BINDIR="${BINDIR:-$HOME/.recall/bin}"
 BINARY="$FROM/recall"
 SUMS="$FROM/SHA256SUMS"
+SHA_VERIFIED=0
 
 if [ ! -f "$BINARY" ]; then
     echo "error: recall not found in '$FROM' - pass a release directory." >&2
@@ -45,6 +50,7 @@ if [ -f "$SUMS" ] && [ "${SKIP_SHA_CHECK:-0}" != "1" ]; then
         exit 1
     fi
     echo "Checksum verified: $actual"
+    SHA_VERIFIED=1
 fi
 
 mkdir -p "$BINDIR"
@@ -53,8 +59,22 @@ chmod +x "$BINDIR/recall"
 
 echo "Installed: $BINDIR/recall"
 echo ""
+echo "What changed:"
+if [ "$SHA_VERIFIED" = "1" ]; then
+    echo "  - recall copied into $BINDIR, checksum verified"
+else
+    echo "  - recall copied into $BINDIR (checksum check skipped)"
+fi
+echo "  - nothing else: PATH, shell profiles, hooks, database, and model were NOT touched"
+echo ""
+echo "Verify the install:"
+echo "    $BINDIR/recall version"
+echo ""
 echo "To use recall from anywhere, add it to your PATH:"
 echo "    export PATH=\"\$PATH:$BINDIR\"   # add to ~/.bashrc / ~/.zshrc"
+echo ""
+echo "Next:"
+echo "    recall capture    # remember how you solved your first problem"
 echo ""
 echo "Optional, explicit integrations (never enabled automatically):"
 echo "    recall shell install   # prompt-hook failure capture"

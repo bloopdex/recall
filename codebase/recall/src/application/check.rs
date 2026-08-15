@@ -56,7 +56,10 @@ pub fn run(db: &Db) -> Result<()> {
     );
 
     if report.problems.is_empty() {
-        println!("RESULT: OK — no consistency problems found.");
+        println!(
+            "{}RESULT: OK — no consistency problems found.",
+            crate::ui::ok()
+        );
         return Ok(());
     }
 
@@ -66,7 +69,8 @@ pub fn run(db: &Db) -> Result<()> {
     }
     println!();
     println!(
-        "RESULT: {} consistency problem(s) found.",
+        "{}RESULT: {} consistency problem(s) found.",
+        crate::ui::warn(),
         report.problems.len()
     );
     println!(

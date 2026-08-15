@@ -22,11 +22,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "Recall - local-first engineering memory"
+Write-Host "Installing the recall binary ..."
+Write-Host ""
+
 if ([string]::IsNullOrEmpty($From)) {
     $From = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 $Binary = Join-Path $From "recall.exe"
 $Sums = Join-Path $From "SHA256SUMS"
+$ShaVerified = $false
 
 if (-not (Test-Path $Binary)) {
     Write-Error "recall.exe not found in '$From' - point -From at a release directory."
@@ -50,6 +55,7 @@ if ((Test-Path $Sums) -and (-not $SkipShaCheck)) {
         exit 1
     }
     Write-Host "Checksum verified: $Actual"
+    $ShaVerified = $true
 }
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -57,9 +63,23 @@ Copy-Item -Force $Binary (Join-Path $BinDir "recall.exe")
 
 Write-Host "Installed: $BinDir\recall.exe"
 Write-Host ""
+Write-Host "What changed:"
+if ($ShaVerified) {
+    Write-Host "  - recall.exe copied into $BinDir, checksum verified"
+} else {
+    Write-Host "  - recall.exe copied into $BinDir (checksum check skipped)"
+}
+Write-Host "  - nothing else: PATH, shell profiles, hooks, database, and model were NOT touched"
+Write-Host ""
+Write-Host "Verify the install:"
+Write-Host "    & '$BinDir\recall.exe' version"
+Write-Host ""
 Write-Host "To use recall from anywhere, add it to your PATH:"
 Write-Host "    [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';$BinDir', 'User')"
 Write-Host "    (then open a new terminal)"
+Write-Host ""
+Write-Host "Next:"
+Write-Host "    recall capture    # remember how you solved your first problem"
 Write-Host ""
 Write-Host "Optional, explicit integrations (never enabled automatically):"
 Write-Host "    recall shell install   # prompt-hook failure capture"
