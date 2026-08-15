@@ -6,15 +6,15 @@ use std::time::Instant;
 
 use tracing::instrument;
 
-use crate::domain::memory::Memory;
-use crate::infrastructure::database::{Db, HybridHit};
+use crate::domain::memory::{Memory, MemoryStatus};
+use crate::infrastructure::database::{Db, HybridHit, SearchFilter};
 use crate::infrastructure::embeddings::Embedder;
 use crate::Result;
 
 pub const DEFAULT_LIMIT: usize = 20;
 
 #[instrument(skip(db))]
-pub fn run(db: &Db, query: &str, limit: usize, explain: bool) -> Result<()> {
+pub fn run(db: &Db, query: &str, limit: usize, explain: bool, filter: &SearchFilter) -> Result<()> {
     let started = Instant::now();
 
     // Semantic layer is best-effort: model missing or embedding failure
@@ -31,12 +31,14 @@ pub fn run(db: &Db, query: &str, limit: usize, explain: bool) -> Result<()> {
         None => None,
     };
 
-    let hits = db.hybrid_search(query, query_vector.as_deref(), limit)?;
+    let hits = db.hybrid_search(query, query_vector.as_deref(), filter, limit)?;
     let duration_ms = started.elapsed().as_millis();
 
     tracing::info!(
         event = "search.run",
         query,
+        project = ?filter.project,
+        include_archived = filter.include_archived,
         results = hits.len(),
         semantic = query_vector.is_some(),
         search_duration_ms = duration_ms,
@@ -77,6 +79,9 @@ fn print_hit(number: usize, hit: &HybridHit, explain: bool) {
     }
     if let Some(project) = &m.project {
         println!("    project: {project}");
+    }
+    if m.status == MemoryStatus::Archived {
+        println!("    status:  archived");
     }
     if let Some(commit) = &m.git_commit {
         println!("    commit:  {commit}");

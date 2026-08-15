@@ -71,6 +71,37 @@ impl NewMemory {
     }
 }
 
+/// Lifecycle state of a persisted memory (ADR-0023). `Active` memories
+/// participate in search; `Archived` memories are kept but excluded from
+/// search by default — recoverable via `recall unarchive`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryStatus {
+    Active,
+    Archived,
+}
+
+impl MemoryStatus {
+    pub const ACTIVE: &'static str = "active";
+    pub const ARCHIVED: &'static str = "archived";
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemoryStatus::Active => Self::ACTIVE,
+            MemoryStatus::Archived => Self::ARCHIVED,
+        }
+    }
+
+    /// Parse a stored status value; unknown values degrade to `Active`
+    /// (defensive — the migration guarantees only known values exist).
+    pub fn parse(s: &str) -> Self {
+        if s.eq_ignore_ascii_case(Self::ARCHIVED) {
+            MemoryStatus::Archived
+        } else {
+            MemoryStatus::Active
+        }
+    }
+}
+
 /// A persisted memory, as read back from the database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Memory {
@@ -92,6 +123,8 @@ pub struct Memory {
     pub cwd: Option<String>,
     /// Capture time, stored as UTC, rendered in local time on display.
     pub captured_at: OffsetDateTime,
+    /// Lifecycle state (Phase 5, migration 0003).
+    pub status: MemoryStatus,
 }
 
 /// Field edits for an existing memory (`recall edit`).

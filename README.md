@@ -62,6 +62,23 @@ recall git install
 git commit -m "fix: pool exhaustion"   # then confirm the capture prompt
 recall git status / recall git uninstall
 recall git install --append            # chain into an existing user hook
+
+# Project-aware search (global by default; scope with --project)
+recall search "connection pool"                # all projects
+recall search --project thorn-api "connection pool"
+recall projects                                # labels, counts, last activity
+recall list --project thorn-api
+
+# Lifecycle: archive = hide + keep (recoverable), delete = permanent
+recall archive 42 / recall unarchive 42
+recall search --include-archived "..."         # find what you archived
+recall delete 42 --yes                         # terminal prompts instead
+recall delete --project old-stack --yes        # bulk, confirmed
+
+# Export/import: portable JSON, no internal ids, secrets redacted by default
+recall export --path backup.json
+recall export --include-secrets --path raw.json   # explicit opt-in
+recall import backup.json                          # duplicates skipped
 ```
 
 ## How it works
@@ -109,7 +126,7 @@ See [docs/development/README.md](docs/development/README.md) for the full workfl
 | 2 — Capture MVP | done | `recall capture` (interactive/flags/stdin), `recall search`, `recall list` |
 | 3 — Semantic Search | done | Local embeddings (MiniLM via fastembed), sqlite-vec, hybrid RRF search, eval harness |
 | 4 — Shell & Git Integration | done | Prompt-hook failure capture (PowerShell/Bash), post-commit git hook, secret redaction |
-| 5 — Projects & Lifecycle | planned | Project scoping, retention |
+| 5 — Projects & Lifecycle | done | Project-aware search + `recall projects`, archive/unarchive/delete, portable JSON export/import, pre-migration backup |
 | 6 — Hardening | planned | <100ms @ 10k entries, redaction, encryption at rest |
 | 7 — Ecosystem & Release | planned | DeployScore incident feed, CI failure capture |
 

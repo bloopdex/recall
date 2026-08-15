@@ -165,6 +165,7 @@ fn main() {
                 50,
                 recall::infrastructure::embeddings::MODEL_ID,
                 recall::infrastructure::embeddings::MODEL_VERSION,
+                &recall::infrastructure::database::SearchFilter::default(),
             )
             .expect("semantic search");
             times.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -180,8 +181,13 @@ fn main() {
         let mut times = Vec::with_capacity(ITERATIONS);
         for _ in 0..ITERATIONS {
             let t = Instant::now();
-            db.hybrid_search(query, Some(&query_vec), 20)
-                .expect("hybrid search");
+            db.hybrid_search(
+                query,
+                Some(&query_vec),
+                &recall::infrastructure::database::SearchFilter::default(),
+                20,
+            )
+            .expect("hybrid search");
             times.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         times.sort_by(|a, b| a.partial_cmp(b).unwrap());

@@ -4,7 +4,7 @@
 use time::{Duration, OffsetDateTime};
 
 use recall::domain::memory::NewMemory;
-use recall::infrastructure::database::Db;
+use recall::infrastructure::database::{Db, SearchFilter};
 use recall::infrastructure::embeddings::EMBED_DIMS;
 
 const MODEL: &str = "all-MiniLM-L6-v2";
@@ -52,7 +52,12 @@ fn keyword_only_match_surfaces_via_fts_side() {
     );
     // No embedding for this memory: it must still be found by FTS alone.
     let hits = db
-        .hybrid_search("kafka consumer lag", Some(&unit(1.0)), 10)
+        .hybrid_search(
+            "kafka consumer lag",
+            Some(&unit(1.0)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].memory.id, id);
@@ -79,6 +84,7 @@ fn semantic_only_match_surfaces_via_vector_side() {
         .hybrid_search(
             "database pool keeps running out of connections",
             Some(&unit(0.99)),
+            &SearchFilter::default(),
             10,
         )
         .unwrap();
@@ -107,7 +113,12 @@ fn hybrid_ranks_dual_match_above_single_match() {
         .unwrap();
 
     let hits = db
-        .hybrid_search("postgres connection pool", Some(&unit(0.97)), 10)
+        .hybrid_search(
+            "postgres connection pool",
+            Some(&unit(0.97)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap();
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].memory.id, a, "dual match must beat semantic-only");
@@ -133,13 +144,23 @@ fn ranking_is_deterministic_across_runs() {
             .unwrap();
     }
     let first: Vec<i64> = db
-        .hybrid_search("pool exhausted", Some(&unit(0.99)), 10)
+        .hybrid_search(
+            "pool exhausted",
+            Some(&unit(0.99)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap()
         .iter()
         .map(|h| h.memory.id)
         .collect();
     let second: Vec<i64> = db
-        .hybrid_search("pool exhausted", Some(&unit(0.99)), 10)
+        .hybrid_search(
+            "pool exhausted",
+            Some(&unit(0.99)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap()
         .iter()
         .map(|h| h.memory.id)
@@ -165,7 +186,12 @@ fn ties_break_by_recency() {
     db.insert_embedding(newer, MODEL, VERSION, EMBED_DIMS, &unit(1.0))
         .unwrap();
     let hits = db
-        .hybrid_search("same problem", Some(&unit(0.99)), 10)
+        .hybrid_search(
+            "same problem",
+            Some(&unit(0.99)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap();
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].memory.id, newer);
@@ -181,7 +207,9 @@ fn missing_query_vector_degrades_to_fts_only() {
         None,
         OffsetDateTime::now_utc(),
     );
-    let hits = db.hybrid_search("kafka consumer lag", None, 10).unwrap();
+    let hits = db
+        .hybrid_search("kafka consumer lag", None, &SearchFilter::default(), 10)
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].memory.id, id);
     assert!(hits[0].sem_similarity.is_none());
@@ -192,7 +220,12 @@ fn no_results_is_clean() {
     let (_dir, mut db) = open();
     capture(&mut db, "kafka lag", None, OffsetDateTime::now_utc());
     let hits = db
-        .hybrid_search("completely unrelated", Some(&unit(0.5)), 10)
+        .hybrid_search(
+            "completely unrelated",
+            Some(&unit(0.5)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap();
     assert!(hits.is_empty());
 }

@@ -28,3 +28,14 @@ applied migration is never edited; new schema = new version.
   30-line runner we already understand.
 - **Schema-in-code (CREATE IF NOT EXISTS)** — rejected: no upgrade path
   for existing databases.
+
+## Amendment (2026-08-15, ADR-0023)
+
+Phase 5 adds a **pre-migration backup**: when `Db::open` finds pending
+migrations on a file-backed database, it first snapshots the file to
+`<db>.pre-migration-backup` using SQLite's backup API (WAL-consistent,
+rolling — each upgrade replaces the previous backup, best-effort: a
+backup failure logs and never blocks the open). Recovery path: close
+Recall, restore the backup file over the database, reopen. The upgrade
+of a seeded v2 database is covered by a migration test that verifies
+both the data preservation and the backup's pre-upgrade schema.

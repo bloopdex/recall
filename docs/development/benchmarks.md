@@ -138,3 +138,29 @@ in the common case.
 magnitude to spare; no optimization was performed because none is
 warranted by the measurements.
 
+## Phase 5 — project-scoped search baselines (recorded 2026-08-15)
+
+Machine: Windows 11, 16 logical CPUs, release build
+(`examples/bench_projects.rs`): 10,000 memories + synthetic vectors
+across 10 projects, 20 iterations per measurement.
+
+| Engine | Scope | Avg | Min | Max |
+|---|---|---|---|---|
+| FTS | global | 9.9 ms | 9.0 | 13.8 |
+| FTS | project-03 | **7.2 ms** | 6.8 | 7.6 |
+| Semantic | global | 18.9 ms | 18.3 | 19.5 |
+| Semantic | project-03 | **19.3 ms** | 18.5 | 20.6 |
+| Hybrid | global | 29.7 ms | 28.4 | 35.7 |
+| Hybrid | project-03 | **27.1 ms** | 25.7 | 31.2 |
+
+Notes:
+
+- Scoped FTS is slightly *faster* than global (fewer rows to order).
+- Semantic numbers here are higher than the Phase 3 baseline (~9.8 ms):
+  the Phase 5 second lookup joins `memories` for the status/project
+  predicates. The join costs ~9 ms and buys one filtered code path for
+  every engine — accepted, still ~5× under the <100 ms target.
+- Project filtering rides on the existing `project` index at this
+  scale; no new index was added (measured first, per the standard).
+
+

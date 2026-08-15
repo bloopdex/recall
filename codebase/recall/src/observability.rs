@@ -19,5 +19,11 @@ pub fn init(verbose: bool) {
     } else {
         EnvFilter::new("recall=info")
     };
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    // Logs go to STDERR: stdout is reserved for data (search results,
+    // `recall export` JSON) and must never be polluted by log lines.
+    // (Phase 5 change — required by export-to-stdout.)
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
 }

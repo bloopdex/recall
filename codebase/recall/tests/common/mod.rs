@@ -54,6 +54,8 @@ pub fn run(db: &Path, cwd: Option<&Path>, args: &[&str], stdin_text: Option<&str
 }
 
 /// A temp directory containing a not-yet-created database file.
+// Shared helper: not every integration-test target uses it.
+#[allow(dead_code)]
 pub fn temp_db_path() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = dir.path().join("recall-test.db");

@@ -2223,6 +2223,8 @@ dependencies = [
  "fastembed",
  "reqwest",
  "rusqlite",
+ "serde",
+ "serde_json",
  "sqlite-vec",
  "tempfile",
  "thiserror",

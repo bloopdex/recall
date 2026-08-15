@@ -25,6 +25,7 @@ rows are the source of truth; the FTS index can always be rebuilt from them.
 | git_changed_files | TEXT NULL | `git status --porcelain`, capped 50 lines |
 | cwd | TEXT NULL | auto |
 | captured_at | TEXT NOT NULL | RFC3339 UTC, millisecond precision |
+| status | TEXT NOT NULL DEFAULT 'active' | lifecycle state: `active` \| `archived` (migration 0003, ADR-0023) |
 | created_at / updated_at | TEXT NOT NULL | DB defaults |
 
 Indexes: `project`, `captured_at` (list + future project scoping).
@@ -67,6 +68,24 @@ extra git fields are the Phase 1/2 spec extensions (ADR-0004).
 Embedded SQL files (`src/infrastructure/database/sql/NNNN_name.sql`) applied
 in version order, one transaction each, recorded in `schema_migrations`.
 Append-only: never edit an applied migration.
+
+**Pre-migration backup (Phase 5):** when pending migrations exist,
+`Db::open` snapshots the database to `<db>.pre-migration-backup` first
+(SQLite backup API, rolling, best-effort). Recovery: close Recall,
+restore the backup file over the database, reopen.
+
+## Project & lifecycle filtering (ADR-0021/0022/0023)
+
+- Project identity is the plain `project` label (no `projects` table —
+  scoping is a WHERE on the existing index, `recall projects` is a
+  GROUP BY).
+- `SearchFilter { project: Option<String>, include_archived: bool }` is
+  the single filter struct applied to FTS, semantic, and hybrid search:
+  FTS via the JOIN, semantic via the second lookup over the ≤k MATCH
+  rowids, hybrid via both before RRF fusion. All values parameterized.
+- Archived memories keep their embeddings; deletion removes the row and
+  (via FK cascade + triggers) the embedding metadata and the vec0
+  entry.
 
 ## Semantic layer (Phase 3 — ADR-0014/0015)
 

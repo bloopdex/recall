@@ -37,6 +37,9 @@ pub enum Error {
 
     #[error("shell integration error: {0}")]
     Shell(String),
+
+    #[error("export/import error: {0}")]
+    Export(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

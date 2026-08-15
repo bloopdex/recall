@@ -5,7 +5,7 @@
 use time::OffsetDateTime;
 
 use recall::domain::memory::NewMemory;
-use recall::infrastructure::database::{to_blob, Db};
+use recall::infrastructure::database::{to_blob, Db, SearchFilter};
 use recall::infrastructure::embeddings::EMBED_DIMS;
 
 const MODEL: &str = "all-MiniLM-L6-v2";
@@ -38,7 +38,9 @@ fn insert_query_and_metadata_roundtrip() {
     db.insert_embedding(id, MODEL, VERSION, EMBED_DIMS, &vec(1.0))
         .unwrap();
 
-    let hits = db.semantic_search(&vec(0.99), 5, MODEL, VERSION).unwrap();
+    let hits = db
+        .semantic_search(&vec(0.99), 5, MODEL, VERSION, &SearchFilter::default())
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].0, id);
     assert!(
@@ -71,7 +73,9 @@ fn stale_model_versions_are_identified() {
     let backlog = db.embedding_backlog(MODEL, VERSION).unwrap();
     assert_eq!(backlog, vec![id], "stale version must be in the backlog");
     // Stale vectors never participate in semantic search.
-    let hits = db.semantic_search(&vec(1.0), 5, MODEL, VERSION).unwrap();
+    let hits = db
+        .semantic_search(&vec(1.0), 5, MODEL, VERSION, &SearchFilter::default())
+        .unwrap();
     assert!(hits.is_empty());
 
     // Rebuild with the current version replaces the row.
@@ -79,7 +83,7 @@ fn stale_model_versions_are_identified() {
         .unwrap();
     assert!(db.embedding_backlog(MODEL, VERSION).unwrap().is_empty());
     assert_eq!(
-        db.semantic_search(&vec(1.0), 5, MODEL, VERSION)
+        db.semantic_search(&vec(1.0), 5, MODEL, VERSION, &SearchFilter::default())
             .unwrap()
             .len(),
         1
@@ -103,7 +107,7 @@ fn delete_removes_both_row_and_index() {
         .unwrap();
     db.delete_embedding(id).unwrap();
     assert!(db
-        .semantic_search(&vec(1.0), 5, MODEL, VERSION)
+        .semantic_search(&vec(1.0), 5, MODEL, VERSION, &SearchFilter::default())
         .unwrap()
         .is_empty());
     assert_eq!(db.embedding_stats(MODEL, VERSION).unwrap(), (1, 0, 1));
@@ -130,7 +134,7 @@ fn memory_deletion_cascades_to_embedding_and_index() {
 
     assert!(db.get_memory(id).unwrap().is_none());
     assert!(db
-        .semantic_search(&vec(1.0), 5, MODEL, VERSION)
+        .semantic_search(&vec(1.0), 5, MODEL, VERSION, &SearchFilter::default())
         .unwrap()
         .is_empty());
 }

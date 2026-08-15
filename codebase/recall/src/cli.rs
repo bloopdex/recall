@@ -3,6 +3,7 @@
 //! clap-derive keeps the surface declarative so future subcommands
 //! (`edit`, `export`, ...) plug in without touching the dispatch core.
 
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -47,6 +48,16 @@ pub enum Command {
         #[arg(trailing_var_arg = true, required = true, value_name = "QUERY")]
         query: Vec<String>,
 
+        /// Restrict results to one project label (case-insensitive exact
+        /// match; memories without a project never match). Default:
+        /// search across all projects.
+        #[arg(long, value_name = "NAME")]
+        project: Option<String>,
+
+        /// Include archived memories in the results (default: active only).
+        #[arg(long)]
+        include_archived: bool,
+
         /// Show the per-engine ranking signals behind each result
         /// (put this flag before the query).
         #[arg(long)]
@@ -62,6 +73,69 @@ pub enum Command {
         /// Maximum entries to show.
         #[arg(long, default_value_t = 20, value_name = "N")]
         limit: usize,
+
+        /// Restrict to one project label (case-insensitive exact match).
+        #[arg(long, value_name = "NAME")]
+        project: Option<String>,
+
+        /// List archived memories instead of active ones.
+        #[arg(long)]
+        archived: bool,
+    },
+
+    /// Overview of the projects in the store: labels, memory counts,
+    /// last capture time (the current project is marked with *).
+    Projects,
+
+    /// Move a memory out of active search (recoverable: `recall unarchive`).
+    Archive {
+        /// Id of the memory to archive.
+        id: i64,
+    },
+
+    /// Move an archived memory back into active search.
+    Unarchive {
+        /// Id of the memory to unarchive.
+        id: i64,
+    },
+
+    /// Permanently delete a memory (or every memory of one project).
+    Delete {
+        /// Id of the memory to delete.
+        #[arg(required_unless_present = "project", value_name = "ID")]
+        id: Option<i64>,
+
+        /// Delete every memory with this project label.
+        #[arg(long, value_name = "NAME")]
+        project: Option<String>,
+
+        /// Confirm the deletion in non-interactive contexts
+        /// (a terminal prompts instead).
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Export memories as portable JSON (secrets redacted by default).
+    Export {
+        /// Write to a file instead of stdout.
+        #[arg(long, value_name = "FILE")]
+        path: Option<PathBuf>,
+
+        /// Export raw field text without redaction (opt-in).
+        #[arg(long)]
+        include_secrets: bool,
+    },
+
+    /// Import a Recall export (duplicates skipped unless --force).
+    Import {
+        /// Path of the export file to import.
+        #[arg(value_name = "FILE")]
+        path: PathBuf,
+
+        /// Import entries even when a memory with the same project and
+        /// problem already exists.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Manage the shell integration (failure-context capture + the
@@ -275,20 +349,100 @@ pub fn run() -> anyhow::Result<()> {
             application::edit::run(&mut db, &args)?;
             println!("Edited #{}", args.id);
         }
-        Command::Search { query, explain } => {
+        Command::Search {
+            query,
+            project,
+            include_archived,
+            explain,
+        } => {
             let config = Config::resolve(cli.db.clone())?;
             let db = Db::open(&config.db_path)?;
+            let filter = crate::infrastructure::database::SearchFilter {
+                project,
+                include_archived,
+            };
             application::search::run(
                 &db,
                 &query.join(" "),
                 application::search::DEFAULT_LIMIT,
                 explain,
+                &filter,
             )?;
         }
-        Command::List { limit } => {
+        Command::List {
+            limit,
+            project,
+            archived,
+        } => {
             let config = Config::resolve(cli.db.clone())?;
             let db = Db::open(&config.db_path)?;
-            application::list::run(&db, limit)?;
+            let filter = crate::infrastructure::database::SearchFilter {
+                project,
+                include_archived: archived,
+            };
+            application::list::run(&db, limit, &filter)?;
+        }
+        Command::Projects => {
+            let config = Config::resolve(cli.db.clone())?;
+            let db = Db::open(&config.db_path)?;
+            application::projects::run(&db, &cwd)?;
+        }
+        Command::Archive { id } => {
+            let config = Config::resolve(cli.db.clone())?;
+            let mut db = Db::open(&config.db_path)?;
+            application::lifecycle::set_status(
+                &mut db,
+                id,
+                crate::domain::memory::MemoryStatus::Archived,
+            )?;
+        }
+        Command::Unarchive { id } => {
+            let config = Config::resolve(cli.db.clone())?;
+            let mut db = Db::open(&config.db_path)?;
+            application::lifecycle::set_status(
+                &mut db,
+                id,
+                crate::domain::memory::MemoryStatus::Active,
+            )?;
+        }
+        Command::Delete { id, project, yes } => {
+            let config = Config::resolve(cli.db.clone())?;
+            let mut db = Db::open(&config.db_path)?;
+            let mut input = std::io::stdin().lock();
+            let mut out = std::io::stderr();
+            let stdin_is_tty = std::io::stdin().is_terminal();
+            match (id, project) {
+                (Some(id), _) => application::lifecycle::delete_one(
+                    &mut db,
+                    id,
+                    yes,
+                    stdin_is_tty,
+                    &mut input,
+                    &mut out,
+                )?,
+                (None, Some(project)) => application::lifecycle::delete_project(
+                    &mut db,
+                    &project,
+                    yes,
+                    stdin_is_tty,
+                    &mut input,
+                    &mut out,
+                )?,
+                (None, None) => unreachable!("clap requires id or --project"),
+            }
+        }
+        Command::Export {
+            path,
+            include_secrets,
+        } => {
+            let config = Config::resolve(cli.db.clone())?;
+            let db = Db::open(&config.db_path)?;
+            application::transfer::export(&db, path.as_deref(), include_secrets)?;
+        }
+        Command::Import { path, force } => {
+            let config = Config::resolve(cli.db.clone())?;
+            let mut db = Db::open(&config.db_path)?;
+            application::transfer::import(&mut db, &path, force)?;
         }
         Command::Embeddings(command) => {
             let config = Config::resolve(cli.db.clone())?;

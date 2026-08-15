@@ -10,7 +10,7 @@
 
 use time::OffsetDateTime;
 
-use recall::infrastructure::database::Db;
+use recall::infrastructure::database::{Db, SearchFilter};
 use recall::infrastructure::embeddings::{Embedder, MODEL_ID, MODEL_VERSION};
 
 /// (problem, error, category)
@@ -244,7 +244,7 @@ fn main() {
                 .collect();
             let qvec = embedder.embed_one(query).unwrap();
             let hybrid_hits: Vec<usize> = db
-                .hybrid_search(query, Some(&qvec), 5)
+                .hybrid_search(query, Some(&qvec), &SearchFilter::default(), 5)
                 .unwrap()
                 .iter()
                 .map(|h| h.memory.id as usize)

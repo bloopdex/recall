@@ -3,7 +3,7 @@
 //! the plan and emit NULL `distance` on larger tables, so the two-step
 //! query shape in `Db::semantic_search` is pinned here.
 
-use recall::infrastructure::database::Db;
+use recall::infrastructure::database::{Db, SearchFilter};
 use recall::infrastructure::embeddings::EMBED_DIMS;
 
 fn synthetic(seed: f64) -> Vec<f32> {
@@ -37,7 +37,9 @@ fn semantic_search_on_ten_thousand_vectors() {
             .unwrap();
     }
 
-    let hits = db.semantic_search(&synthetic(42.0), 50, "m", "1").unwrap();
+    let hits = db
+        .semantic_search(&synthetic(42.0), 50, "m", "1", &SearchFilter::default())
+        .unwrap();
     assert_eq!(hits.len(), 50, "k=50 must return 50 rows");
     for (_, distance) in &hits {
         assert!(distance.is_finite(), "distance must never be NULL/NaN");
@@ -50,13 +52,23 @@ fn semantic_search_on_ten_thousand_vectors() {
 
     // Hybrid over the same store also works and stays deterministic.
     let a: Vec<i64> = db
-        .hybrid_search("problem 5000", Some(&synthetic(1.0)), 10)
+        .hybrid_search(
+            "problem 5000",
+            Some(&synthetic(1.0)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap()
         .iter()
         .map(|h| h.memory.id)
         .collect();
     let b: Vec<i64> = db
-        .hybrid_search("problem 5000", Some(&synthetic(1.0)), 10)
+        .hybrid_search(
+            "problem 5000",
+            Some(&synthetic(1.0)),
+            &SearchFilter::default(),
+            10,
+        )
         .unwrap()
         .iter()
         .map(|h| h.memory.id)

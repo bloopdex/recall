@@ -8,13 +8,15 @@ pub mod fts;
 pub mod migrations;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rusqlite::{params, Connection, Row};
 use time::{format_description, macros::format_description, OffsetDateTime};
 
-use crate::domain::memory::{normalize_for_comparison, Memory, MemoryEdits, NewMemory};
+use crate::domain::memory::{
+    normalize_for_comparison, Memory, MemoryEdits, MemoryStatus, NewMemory,
+};
 use crate::infrastructure::embeddings::{EMBED_DIMS, MODEL_ID, MODEL_VERSION};
 use crate::{Error, Result};
 
@@ -74,6 +76,36 @@ pub struct SearchHit {
     pub rank: f64,
 }
 
+/// Filters applied uniformly to FTS, semantic, and hybrid search
+/// (ADR-0022). All values are parameterized — never interpolated into SQL.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchFilter {
+    /// Restrict to this project label (case-insensitive exact match;
+    /// memories with no project never match a named filter).
+    pub project: Option<String>,
+    /// Include archived memories (default: active memories only).
+    pub include_archived: bool,
+}
+
+impl SearchFilter {
+    pub fn with_project(project: &str) -> Self {
+        SearchFilter {
+            project: Some(project.to_string()),
+            include_archived: false,
+        }
+    }
+}
+
+/// One row of the `recall projects` report (ADR-0022).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectStat {
+    /// Project label; `None` for memories captured outside any project.
+    pub project: Option<String>,
+    pub count: i64,
+    /// Most recent capture timestamp (RFC3339 UTC).
+    pub last_captured: String,
+}
+
 /// Handle to the Recall database.
 pub struct Db {
     conn: Connection,
@@ -90,6 +122,11 @@ impl Db {
                 std::fs::create_dir_all(parent)?;
             }
         }
+        // Safety net (Phase 5): when pending migrations exist, snapshot the
+        // database first so an upgrade can always be undone by restoring
+        // `<db>.pre-migration-backup`. Uses SQLite's backup API, which is
+        // WAL-consistent.
+        backup_before_migrations(path);
         // MUST run before the connection is created: rusqlite applies
         // auto-registered extensions only to new connections.
         register_vec_extension();
@@ -224,7 +261,8 @@ impl Db {
             .query_row(
                 "SELECT id, problem, solution, error, context, investigation, root_cause,
                         verification, environment, explanation, project, repo_path,
-                        git_branch, git_commit, git_changed_files, cwd, captured_at
+                        git_branch, git_commit, git_changed_files, cwd, captured_at,
+                        status
                  FROM memories WHERE id = ?1",
                 [id],
                 memory_from_row,
@@ -236,26 +274,159 @@ impl Db {
             })
     }
 
-    /// Most recent memories, newest first.
+    /// Most recent memories, newest first (active only, no project filter).
     pub fn list_memories(&self, limit: usize) -> Result<Vec<Memory>> {
-        self.query_memories(
+        self.list_memories_filtered(&SearchFilter::default(), limit)
+    }
+
+    /// Most recent memories matching `filter`, newest first. The status
+    /// predicate makes archived memories invisible by default (ADR-0023);
+    /// the project predicate scopes to one project label (ADR-0022).
+    pub fn list_memories_filtered(
+        &self,
+        filter: &SearchFilter,
+        limit: usize,
+    ) -> Result<Vec<Memory>> {
+        let mut sql = String::from(
             "SELECT id, problem, solution, error, context, investigation, root_cause,
                     verification, environment, explanation, project, repo_path,
-                    git_branch, git_commit, git_changed_files, cwd, captured_at
-             FROM memories ORDER BY captured_at DESC, id DESC LIMIT ?1",
-            params![limit as i64],
-        )
+                    git_branch, git_commit, git_changed_files, cwd, captured_at,
+                    status
+             FROM memories",
+        );
+        let mut values: Vec<rusqlite::types::Value> = Vec::new();
+        let mut where_parts: Vec<String> = Vec::new();
+        if !filter.include_archived {
+            where_parts.push("status = 'active'".to_string());
+        }
+        if let Some(project) = &filter.project {
+            let n = values.len() + 1;
+            where_parts.push(format!("project = ?{n} COLLATE NOCASE"));
+            values.push(rusqlite::types::Value::Text(project.clone()));
+        }
+        if !where_parts.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_parts.join(" AND "));
+        }
+        sql.push_str(" ORDER BY captured_at DESC, id DESC LIMIT ?");
+        sql.push_str(&(values.len() + 1).to_string());
+        values.push(rusqlite::types::Value::Integer(limit as i64));
+        self.query_memories(&sql, rusqlite::params_from_iter(values))
     }
 
     /// Delete a memory and — via FK cascade and the FTS/vec triggers —
     /// its keyword and vector index entries. Returns `false` when no
-    /// memory with `id` exists. (Used by tests; retention policies arrive
-    /// in Phase 5.)
+    /// memory with `id` exists.
     pub fn delete_memory(&mut self, id: i64) -> Result<bool> {
         let tx = self.conn.transaction()?;
         let changed = tx.execute("DELETE FROM memories WHERE id = ?1", [id])?;
         tx.commit()?;
         Ok(changed > 0)
+    }
+
+    /// Persist a memory with an explicit lifecycle status — the import
+    /// path (ADR-0024) preserves archived state; capture always uses
+    /// [`Self::insert_memory`] (status defaults to `active`).
+    pub fn insert_memory_with_status(
+        &mut self,
+        memory: &NewMemory,
+        captured_at: OffsetDateTime,
+        status: MemoryStatus,
+    ) -> Result<i64> {
+        let captured = captured_at
+            .format(CAPTURED_AT_FMT)
+            .map_err(|e| Error::Time(format!("cannot format capture timestamp: {e}")))?;
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO memories (
+                 problem, solution, error, context, investigation, root_cause,
+                 verification, environment, explanation, project, repo_path,
+                 git_branch, git_commit, git_changed_files, cwd, captured_at,
+                 status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                memory.problem,
+                memory.solution,
+                memory.error,
+                memory.context,
+                memory.investigation,
+                memory.root_cause,
+                memory.verification,
+                memory.environment,
+                memory.explanation,
+                memory.project,
+                memory.repo_path,
+                memory.git_branch,
+                memory.git_commit,
+                memory.git_changed_files,
+                memory.cwd,
+                captured,
+                status.as_str(),
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Set a memory's lifecycle status (archive/unarchive, ADR-0023).
+    /// Returns `false` when no memory with `id` exists. Search indexes
+    /// need no maintenance: status is filtered at query time, embeddings
+    /// are kept so unarchiving is instant.
+    pub fn set_status(&mut self, id: i64, status: MemoryStatus) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let changed = tx.execute(
+            "UPDATE memories SET status = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?2",
+            params![status.as_str(), id],
+        )?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// Delete every memory with the given project label (case-insensitive
+    /// exact match; ADR-0023). Embeddings and both index entries follow
+    /// via FK cascade + triggers, in one transaction. Returns the number
+    /// of deleted memories.
+    pub fn delete_memories_by_project(&mut self, project: &str) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let changed = tx.execute(
+            "DELETE FROM memories WHERE project = ?1 COLLATE NOCASE",
+            [project],
+        )?;
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// Distinct project labels with memory counts and last capture time,
+    /// newest activity first (drives `recall projects`, ADR-0022).
+    pub fn project_stats(&self) -> Result<Vec<ProjectStat>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT project, count(*) AS memories, max(captured_at) AS last
+             FROM memories
+             GROUP BY project
+             ORDER BY last DESC, project ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ProjectStat {
+                project: r.get(0)?,
+                count: r.get(1)?,
+                last_captured: r.get(2)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Error::Db)
+    }
+
+    /// All memories in id order, any status — the export path (ADR-0024).
+    pub fn memories_for_export(&self) -> Result<Vec<Memory>> {
+        self.query_memories(
+            "SELECT id, problem, solution, error, context, investigation, root_cause,
+                    verification, environment, explanation, project, repo_path,
+                    git_branch, git_commit, git_changed_files, cwd, captured_at,
+                    status
+             FROM memories ORDER BY id",
+            [],
+        )
     }
 
     /// Update user-provided fields of an existing memory. Returns `false`
@@ -333,11 +504,14 @@ impl Db {
         let error_norm = memory.error.as_deref().map(normalize_for_comparison);
 
         // Candidate set: recent memories in the same project (NULL-safe).
+        // Archived memories participate: deduplication protects the store
+        // from re-creating a memory the user deliberately archived.
         let candidates = match &memory.project {
             Some(project) => self.query_memories(
                 "SELECT id, problem, solution, error, context, investigation, root_cause,
                         verification, environment, explanation, project, repo_path,
-                        git_branch, git_commit, git_changed_files, cwd, captured_at
+                        git_branch, git_commit, git_changed_files, cwd, captured_at,
+                        status
                  FROM memories
                  WHERE project = ?1 AND captured_at >= ?2
                  ORDER BY captured_at DESC, id DESC
@@ -347,7 +521,8 @@ impl Db {
             None => self.query_memories(
                 "SELECT id, problem, solution, error, context, investigation, root_cause,
                         verification, environment, explanation, project, repo_path,
-                        git_branch, git_commit, git_changed_files, cwd, captured_at
+                        git_branch, git_commit, git_changed_files, cwd, captured_at,
+                        status
                  FROM memories
                  WHERE project IS NULL AND captured_at >= ?1
                  ORDER BY captured_at DESC, id DESC
@@ -459,13 +634,21 @@ impl Db {
     }
 
     /// k-nearest semantic search over the vec0 index: (memory_id, cosine
-    /// distance). Only embeddings of the given model/version participate.
+    /// distance). Only embeddings of the given model/version participate,
+    /// plus the status/project filters (ADR-0022/0023).
+    ///
+    /// Filtering happens in the SECOND lookup over the returned rowids,
+    /// never inside the MATCH statement (the vec0 scan must stay the
+    /// driving query — ADR-0014). Consequence: the candidate window is the
+    /// unfiltered top-k, so a small project may surface fewer semantic
+    /// hits than `k`; acceptable at personal scale, documented.
     pub fn semantic_search(
         &self,
         query_vector: &[f32],
         k: usize,
         model: &str,
         model_version: &str,
+        filter: &SearchFilter,
     ) -> Result<Vec<(i64, f64)>> {
         if !self.vec_enabled {
             return Ok(Vec::new());
@@ -485,11 +668,14 @@ impl Db {
             return Ok(Vec::new());
         }
 
-        // Keep only embeddings produced by the current model/version.
+        // Keep only embeddings of the current model/version whose memory
+        // matches the status/project filters. This second lookup is over
+        // the ≤k returned rowids only.
         let placeholders = vec!["?"; rows.len()].join(",");
-        let sql = format!(
-            "SELECT memory_id FROM embeddings
-             WHERE memory_id IN ({placeholders}) AND model = ? AND model_version = ?"
+        let mut sql = format!(
+            "SELECT e.memory_id FROM embeddings e
+             JOIN memories m ON m.id = e.memory_id
+             WHERE e.memory_id IN ({placeholders}) AND e.model = ? AND e.model_version = ?"
         );
         let mut params: Vec<rusqlite::types::Value> = rows
             .iter()
@@ -497,6 +683,14 @@ impl Db {
             .collect();
         params.push(rusqlite::types::Value::Text(model.to_string()));
         params.push(rusqlite::types::Value::Text(model_version.to_string()));
+        if !filter.include_archived {
+            sql.push_str(" AND m.status = 'active'");
+        }
+        if let Some(project) = &filter.project {
+            let n = params.len() + 1;
+            sql.push_str(&format!(" AND m.project = ?{n} COLLATE NOCASE"));
+            params.push(rusqlite::types::Value::Text(project.clone()));
+        }
         let mut stmt = self.conn.prepare(&sql)?;
         let current: std::collections::HashSet<i64> = stmt
             .query_map(rusqlite::params_from_iter(params), |r| r.get(0))?
@@ -510,18 +704,20 @@ impl Db {
     }
 
     /// Hybrid search (ADR-0016): reciprocal-rank fusion of the FTS5
-    /// keyword candidates and the vec0 semantic candidates. Deterministic:
-    /// same inputs, same order. `query_vector: None` degrades to
-    /// FTS-only (model unavailable or query embedding failed).
+    /// keyword candidates and the vec0 semantic candidates, both filtered
+    /// by `filter` (ADR-0022/0023). Deterministic: same inputs, same
+    /// order. `query_vector: None` degrades to FTS-only (model
+    /// unavailable or query embedding failed).
     pub fn hybrid_search(
         &self,
         query: &str,
         query_vector: Option<&[f32]>,
+        filter: &SearchFilter,
         limit: usize,
     ) -> Result<Vec<HybridHit>> {
         let mut fused: HashMap<i64, HybridHit> = HashMap::new();
 
-        let fts_hits = self.search(query, CANDIDATE_POOL)?;
+        let fts_hits = self.search_filtered(query, filter, CANDIDATE_POOL)?;
         for (pos, hit) in fts_hits.into_iter().enumerate() {
             let contribution = FTS_WEIGHT / (RRF_K + pos as f64 + 1.0);
             fused.insert(
@@ -536,7 +732,8 @@ impl Db {
         }
 
         if let Some(vector) = query_vector {
-            let sem_hits = self.semantic_search(vector, CANDIDATE_POOL, MODEL_ID, MODEL_VERSION)?;
+            let sem_hits =
+                self.semantic_search(vector, CANDIDATE_POOL, MODEL_ID, MODEL_VERSION, filter)?;
             for (pos, (memory_id, distance)) in sem_hits.into_iter().enumerate() {
                 let similarity = (1.0 - distance).clamp(0.0, 1.0);
                 let contribution = SEM_WEIGHT / (RRF_K + pos as f64 + 1.0);
@@ -578,22 +775,49 @@ impl Db {
     /// (problem 5.0, solution 3.0, error 5.0, remaining fields 1.0 —
     /// see ADR-005), ties broken by recency.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+        self.search_filtered(query, &SearchFilter::default(), limit)
+    }
+
+    /// Keyword search with status/project filters (ADR-0022/0023). The
+    /// filters ride on the JOIN with `memories` — the FTS index itself is
+    /// untouched, and every filter value is a parameter.
+    pub fn search_filtered(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
         let match_query = fts::build_match_query(query)?;
-        let mut stmt = self.conn.prepare(
+        let mut sql = String::from(
             "SELECT m.id, m.problem, m.solution, m.error, m.context, m.investigation,
                     m.root_cause, m.verification, m.environment, m.explanation,
                     m.project, m.repo_path, m.git_branch, m.git_commit,
-                    m.git_changed_files, m.cwd, m.captured_at,
+                    m.git_changed_files, m.cwd, m.captured_at, m.status,
                     bm25(memories_fts, 5.0, 3.0, 5.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0) AS rank
              FROM memories_fts
              JOIN memories m ON m.id = memories_fts.rowid
-             WHERE memories_fts MATCH ?1
-             ORDER BY rank ASC, m.captured_at DESC, m.id DESC
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![match_query, limit as i64], |row| {
+             WHERE memories_fts MATCH ?1",
+        );
+        let mut values: Vec<rusqlite::types::Value> =
+            vec![rusqlite::types::Value::Text(match_query)];
+        if !filter.include_archived {
+            sql.push_str(" AND m.status = 'active'");
+        }
+        if let Some(project) = &filter.project {
+            let n = values.len() + 1;
+            sql.push_str(&format!(" AND m.project = ?{n} COLLATE NOCASE"));
+            values.push(rusqlite::types::Value::Text(project.clone()));
+        }
+        let limit_placeholder = values.len() + 1;
+        sql.push_str(&format!(
+            " ORDER BY rank ASC, m.captured_at DESC, m.id DESC LIMIT ?{limit_placeholder}"
+        ));
+        values.push(rusqlite::types::Value::Integer(limit as i64));
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(values), |row| {
             let memory = memory_from_row(row)?;
-            let rank = row.get::<_, f64>(17)?;
+            let rank = row.get::<_, f64>(18)?;
             Ok(SearchHit { memory, rank })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -611,6 +835,51 @@ impl Db {
 /// Serialize f32 vector to little-endian bytes (sqlite-vec blob layout).
 pub fn to_blob(vector: &[f32]) -> Vec<u8> {
     vector.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// Snapshot the database to `<db>.pre-migration-backup` when pending
+/// migrations exist (Phase 5, ADR-0023 lifecycle). Rolling: each upgrade
+/// replaces the previous backup. Best-effort: a backup failure never
+/// blocks the open (migrations are transactional; the backup is the
+/// belt-and-braces recovery path, documented in docs/database/README.md).
+fn backup_before_migrations(path: &Path) {
+    let backup_path = PathBuf::from(format!("{}.pre-migration-backup", path.display()));
+    let result = (|| -> Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let probe = Connection::open(path)?;
+        let current: i64 = probe
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let latest = migrations::MIGRATIONS
+            .last()
+            .map(|m| m.version)
+            .unwrap_or(0);
+        if current >= latest {
+            return Ok(());
+        }
+        if backup_path.exists() {
+            std::fs::remove_file(&backup_path)?;
+        }
+        let mut dest = Connection::open(&backup_path)?;
+        let backup = rusqlite::backup::Backup::new(&probe, &mut dest)?;
+        backup.run_to_completion(5, Duration::from_millis(10), None)?;
+        tracing::info!(
+            event = "db.pre_migration_backup",
+            backup = %backup_path.display(),
+            from_version = current,
+            to_version = latest,
+        );
+        Ok(())
+    })();
+    if let Err(e) = result {
+        tracing::warn!(event = "db.pre_migration_backup_failed", error = %e);
+    }
 }
 
 fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {
@@ -640,5 +909,6 @@ fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {
         git_changed_files: row.get(14)?,
         cwd: row.get(15)?,
         captured_at,
+        status: MemoryStatus::parse(&row.get::<_, String>(17)?),
     })
 }

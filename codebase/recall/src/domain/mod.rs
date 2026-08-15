@@ -9,5 +9,6 @@
 //! `environment`; new auto-captured fields: `repo_path`, `git_branch`,
 //! `git_changed_files`, `cwd`. Required: `problem`, `solution`.
 
+pub mod export;
 pub mod memory;
 pub mod sanitize;

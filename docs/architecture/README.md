@@ -18,6 +18,14 @@ the shell prompt hook records failed commands into env vars
 (`recall capture --from-shell`), and a post-commit git hook invokes
 `recall capture --from-git` after successful commits (ADR-0017/0019).
 
+Phase 5 adds lifecycle and portability on top of the same pipeline: a
+single `SearchFilter` (project + archived status) flows through FTS,
+semantic, and hybrid search (ADR-0022/0023); `domain::export` defines
+the portable JSON format; `application::lifecycle` and
+`application::transfer` expose archive/unarchive/delete and
+export/import; the pre-migration backup lives in `Db::open`
+(ADR-0023/0006).
+
 ## Boundaries and dependency direction
 
 - `domain/` — the canonical entry model (`NewMemory`, `Memory`). Pure data +
@@ -78,3 +86,7 @@ capture time, log `search.run` with `search_duration_ms`.
 - ADR-0018 — shell output sanitization & privacy (redact → show → confirm)
 - ADR-0019 — git integration (non-blocking post-commit hook, explicit gate)
 - ADR-0020 — hook installation & preservation (marked blocks, never overwrite)
+- ADR-0021 — project identity (user-facing label; no projects table)
+- ADR-0022 — project-aware search (global default, one filtered pipeline)
+- ADR-0023 — lifecycle (archive/delete, no automatic retention, pre-migration backup)
+- ADR-0024 — export/import (portable JSON, no ids, secrets redacted by default)
