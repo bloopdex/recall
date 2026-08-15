@@ -255,6 +255,12 @@ fn reads_during_a_sustained_write_stream_never_error_or_see_partial_rows() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("recall.db");
 
+    // Initialize the store once, up front: first-run CREATION races are
+    // a different pinned corner (the test above). This test is about
+    // reads during writes on a warm database, so the schema must exist
+    // before either thread opens the file.
+    drop(Db::open(&db_path).expect("initial open"));
+
     const WRITES: usize = 200;
     let done = Arc::new(AtomicBool::new(false));
     let writer_db_path = db_path.clone();

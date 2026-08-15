@@ -1,13 +1,16 @@
-//! Install-script behavior (ADR-0031).
+//! Install/uninstall-script behavior (ADR-0031 amendment).
 //!
 //! The install scripts are minimal by design: copy the binary into a
-//! user bin directory, verify checksums when present, print PATH
-//! guidance, and NEVER touch shell profiles, PATH, the database, or the
-//! integrations. The Windows tests run the real install.ps1 against a
-//! fake release directory (the compiled test binary plays the role of
-//! recall.exe) and pin: placement, idempotency, checksum verification,
-//! and tamper refusal. install.sh is exercised through `sh` when
-//! available (gracefully skipped otherwise).
+//! user bin directory, verify checksums when present, and — on Windows —
+//! append the bin directory to the USER PATH (opt-out `-SkipPath`,
+//! never the SYSTEM PATH, never shell profiles, never the database or
+//! the integrations). The Windows tests run the real install.ps1 and
+//! uninstall.ps1 against a fake release directory (the compiled test
+//! binary plays the role of recall.exe) and pin: placement,
+//! idempotency, checksum verification, tamper refusal, and the PATH
+//! helpers (in isolation, with explicit values, so the real user PATH
+//! is never written by a test). install.sh is exercised through `sh`
+//! when available (gracefully skipped otherwise).
 
 mod common;
 
@@ -64,11 +67,13 @@ fn install_ps1_places_the_binary_verifies_checksums_and_is_idempotent() {
     let bin_dir = dir.path().join("bin");
 
     let script = repo_root().join("scripts/install.ps1");
+    // -SkipPath: the test suite must never modify the real user PATH.
     let out = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
             "-File",
             script.to_str().unwrap(),
+            "-SkipPath",
             "-From",
             release.to_str().unwrap(),
             "-BinDir",
@@ -84,6 +89,7 @@ fn install_ps1_places_the_binary_verifies_checksums_and_is_idempotent() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Checksum verified"), "{stdout}");
     assert!(stdout.contains("Installed:"), "{stdout}");
+    assert!(stdout.contains("PATH: skipped"), "{stdout}");
     assert!(bin_dir.join("recall.exe").exists(), "binary must be placed");
 
     // Idempotent: a second install succeeds.
@@ -92,6 +98,7 @@ fn install_ps1_places_the_binary_verifies_checksums_and_is_idempotent() {
             "-NoProfile",
             "-File",
             script.to_str().unwrap(),
+            "-SkipPath",
             "-From",
             release.to_str().unwrap(),
             "-BinDir",
@@ -125,6 +132,7 @@ fn install_ps1_refuses_a_tampered_binary() {
             "-NoProfile",
             "-File",
             script.to_str().unwrap(),
+            "-SkipPath",
             "-From",
             release.to_str().unwrap(),
             "-BinDir",
@@ -193,4 +201,219 @@ fn install_sh_places_the_binary_when_sh_is_available() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Checksum verified"), "{stdout}");
     assert!(bin_dir.join("recall").exists(), "binary must be placed");
+}
+
+/// Read the real USER PATH (read-only; tests never write it).
+#[cfg(windows)]
+fn user_path() -> String {
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "[Environment]::GetEnvironmentVariable('Path','User')",
+        ])
+        .output()
+        .expect("powershell must run");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Run one expression against scripts/path.ps1 with explicit -UserPath
+/// values, so the real user PATH is never read for modification.
+#[cfg(windows)]
+fn path_helper(expr: &str) -> String {
+    let script = repo_root().join("scripts/path.ps1");
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!(". '{}'; {expr}", script.display()),
+        ])
+        .output()
+        .expect("powershell must run");
+    assert!(
+        out.status.success(),
+        "path helper failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[cfg(windows)]
+#[test]
+fn user_path_detection_is_case_insensitive_and_trims_slashes() {
+    assert_eq!(
+        path_helper(
+            "Test-UserPathEntry -Entry 'C:\\recall\\bin' -UserPath 'A;C:\\RECALL\\BIN\\;B'"
+        ),
+        "True"
+    );
+    assert_eq!(
+        path_helper("Test-UserPathEntry -Entry 'C:\\recall\\bin' -UserPath 'A;B'"),
+        "False"
+    );
+    assert_eq!(
+        path_helper("Test-UserPathEntry -Entry 'C:\\recall\\bin' -UserPath ''"),
+        "False"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn user_path_detection_expands_environment_variable_tokens() {
+    let expanded = format!("{}\\.recall\\bin", std::env::var("USERPROFILE").unwrap());
+    let expr = format!(
+        "Test-UserPathEntry -Entry '%USERPROFILE%\\.recall\\bin' -UserPath 'A;{expanded};B'"
+    );
+    assert_eq!(path_helper(&expr), "True");
+}
+
+#[cfg(windows)]
+#[test]
+fn adding_a_user_path_entry_appends_without_duplicates_and_preserves_the_rest() {
+    // Pure append: the existing value is preserved byte-for-byte.
+    assert_eq!(
+        path_helper(
+            "Add-UserPathEntry -Entry 'C:\\new' -UserPath 'C:\\Program Files\\x;%SystemRoot%'"
+        ),
+        "C:\\Program Files\\x;%SystemRoot%;C:\\new"
+    );
+    // Already present (any case, any trailing slash) -> unchanged.
+    assert_eq!(
+        path_helper("Add-UserPathEntry -Entry 'C:\\new' -UserPath 'A;C:\\NEW\\;B'"),
+        "A;C:\\NEW\\;B"
+    );
+    // Empty user PATH -> just the entry.
+    assert_eq!(
+        path_helper("Add-UserPathEntry -Entry 'C:\\new' -UserPath ''"),
+        "C:\\new"
+    );
+    // A trailing empty entry survives byte-for-byte.
+    assert_eq!(
+        path_helper("Add-UserPathEntry -Entry 'C:\\new' -UserPath 'A;B;'"),
+        "A;B;;C:\\new"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn removing_a_user_path_entry_preserves_everything_else() {
+    assert_eq!(
+        path_helper("Remove-UserPathEntry -Entry 'C:\\old' -UserPath 'A;C:\\old;B;;C'"),
+        "A;B;;C"
+    );
+    assert_eq!(
+        path_helper("Remove-UserPathEntry -Entry 'C:\\missing' -UserPath 'A;B'"),
+        "A;B"
+    );
+    assert_eq!(
+        path_helper("Remove-UserPathEntry -Entry 'C:\\old' -UserPath 'C:\\old'"),
+        ""
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn install_ps1_skip_path_never_touches_the_user_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let release = fake_release_dir(dir.path());
+    let bin_dir = dir.path().join("bin");
+    let before = user_path();
+    let script = repo_root().join("scripts/install.ps1");
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-File",
+            script.to_str().unwrap(),
+            "-SkipPath",
+            "-From",
+            release.to_str().unwrap(),
+            "-BinDir",
+            bin_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("powershell must run");
+    assert!(
+        out.status.success(),
+        "install failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("PATH: skipped"), "{stdout}");
+    assert_eq!(
+        user_path(),
+        before,
+        "-SkipPath must leave the user PATH byte-for-byte unchanged"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn uninstall_ps1_removes_only_the_binary_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin_dir = dir.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    std::fs::copy(common::bin(), bin_dir.join("recall.exe")).unwrap();
+    // A user file next to the binary must survive.
+    std::fs::write(bin_dir.join("keep.txt"), "user data").unwrap();
+
+    let before = user_path();
+    let script = repo_root().join("scripts/uninstall.ps1");
+    let run_uninstall = || {
+        let out = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-File",
+                script.to_str().unwrap(),
+                "-BinDir",
+                bin_dir.to_str().unwrap(),
+            ])
+            .output()
+            .expect("powershell must run");
+        assert!(
+            out.status.success(),
+            "uninstall failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    let first = run_uninstall();
+    assert!(first.contains("Removed:"), "{first}");
+    assert!(!bin_dir.join("recall.exe").exists(), "binary must be gone");
+    assert!(bin_dir.join("keep.txt").exists(), "user files must survive");
+    assert!(bin_dir.exists(), "a non-empty bin dir is never removed");
+    assert!(first.contains("Your memories were not deleted"), "{first}");
+
+    // Idempotent: a second run succeeds and reports nothing to remove.
+    let second = run_uninstall();
+    assert!(second.contains("Binary: not present"), "{second}");
+    assert_eq!(
+        user_path(),
+        before,
+        "uninstall must never alter an unrelated user PATH"
+    );
+
+    // A bin directory holding ONLY the binary is removed with it.
+    let lone_dir = dir.path().join("lone");
+    std::fs::create_dir_all(&lone_dir).unwrap();
+    std::fs::copy(common::bin(), lone_dir.join("recall.exe")).unwrap();
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-File",
+            repo_root().join("scripts/uninstall.ps1").to_str().unwrap(),
+            "-BinDir",
+            lone_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("powershell must run");
+    assert!(
+        out.status.success(),
+        "uninstall failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !lone_dir.exists(),
+        "an emptied bin directory must be removed"
+    );
 }

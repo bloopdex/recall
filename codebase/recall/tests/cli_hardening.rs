@@ -307,3 +307,50 @@ fn plain_mode_is_the_default_for_pipes() {
         );
     }
 }
+
+#[test]
+fn empty_store_keeps_plain_output_when_piped() {
+    // The friendly empty-store view is a terminal experience only:
+    // piped `recall list` on a brand-new database keeps the plain line.
+    let (_dir, db) = temp_db_path();
+    let out = run(&db, &["list"]);
+    assert_eq!(code(&out), Some(0), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("No memories found"), "{text}");
+    assert!(
+        !text.contains("Nothing here yet"),
+        "the empty-store view must be TTY-only: {text}"
+    );
+    assert!(text.is_ascii(), "piped output must stay ASCII: {text}");
+}
+
+#[test]
+fn default_runs_print_no_log_noise_on_stderr() {
+    // Everyday commands must be quiet: the structured event log is
+    // diagnostic and belongs behind --verbose (pinned alongside the
+    // verbose test above). No INFO events, no timestamps, on a plain
+    // successful capture.
+    let (_dir, db) = temp_db_path();
+    let out = run(
+        &db,
+        &[
+            "capture",
+            "--problem",
+            "quiet problem",
+            "--solution",
+            "quiet fix",
+        ],
+    );
+    assert_eq!(code(&out), Some(0), "{}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        !err.contains("INFO"),
+        "default runs must not log INFO: {err}"
+    );
+    assert!(
+        !err.contains("event="),
+        "default runs must not log events: {err}"
+    );
+    assert!(!err.contains("capture.success"), "{err}");
+    assert!(stdout(&out).contains("Captured #1"), "{}", stdout(&out));
+}

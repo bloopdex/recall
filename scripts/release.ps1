@@ -48,6 +48,8 @@ New-Item -ItemType Directory -Force -Path $Bundle | Out-Null
 Copy-Item (Join-Path $Root "codebase\recall\target\release\recall.exe") (Join-Path $Bundle "recall.exe")
 Copy-Item (Join-Path $Root "scripts\install.ps1") (Join-Path $Bundle "install.ps1")
 Copy-Item (Join-Path $Root "scripts\install.sh") (Join-Path $Bundle "install.sh")
+Copy-Item (Join-Path $Root "scripts\uninstall.ps1") (Join-Path $Bundle "uninstall.ps1")
+Copy-Item (Join-Path $Root "scripts\path.ps1") (Join-Path $Bundle "path.ps1")
 Copy-Item (Join-Path $Root "CHANGELOG.md") (Join-Path $Bundle "CHANGELOG.md")
 Copy-Item (Join-Path $Root "LICENSE") (Join-Path $Bundle "LICENSE")
 

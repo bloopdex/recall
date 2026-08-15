@@ -26,15 +26,17 @@ use tracing_subscriber::EnvFilter;
 
 /// Initialize the tracing subscriber.
 ///
-/// Level: `RECALL_LOG` env var if set, otherwise `recall=info`; `--verbose`
-/// (the `verbose` flag) raises it to `recall=debug`.
+/// Levels: `RECALL_LOG` env var when set (explicit override), otherwise
+/// `recall=warn` — the default is quiet so everyday commands print no
+/// log noise; `--verbose` raises it to `recall=debug` (structured
+/// events, ids/counts only, never memory content).
 pub fn init(verbose: bool) {
     let filter = if let Ok(level) = std::env::var("RECALL_LOG") {
         EnvFilter::new(level)
     } else if verbose {
         EnvFilter::new("recall=debug")
     } else {
-        EnvFilter::new("recall=info")
+        EnvFilter::new("recall=warn")
     };
     // Logs go to STDERR: stdout is reserved for data (search results,
     // `recall export` JSON) and must never be polluted by log lines.

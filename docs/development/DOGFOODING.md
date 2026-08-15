@@ -38,11 +38,18 @@ v1.1.
 1. Build the bundle: `powershell -File scripts\release.ps1 -Version 1.0.0`.
 2. Install from it: `powershell -File install.ps1 -From
    dist\recall-1.0.0-windows-x86_64`.
-3. Read the installer output in full — the "what changed / verify /
-   next" section must be self-explanatory to a first-time user.
-4. Add the binary directory to PATH manually (the installer never
-   touches PATH), open a new terminal, run `recall version`.
-5. Note anything that required reading the README. If a step needed
+3. Read the installer output in full — the "what changed / what was NOT
+   touched / verify / next" section must be self-explanatory to a
+   first-time user, including the USER-path addition (or
+   "already present") and the new-terminal note.
+4. Open a new terminal and run `recall version` — the USER path change
+   made by the installer must make `recall` work globally with zero
+   manual steps. (`-SkipPath` reproduces the old manual-PATH behavior
+   for scripted installs.)
+5. Uninstall: `powershell -File uninstall.ps1` — the binary and the
+   Recall path entry are removed, everything else in PATH survives,
+   memories and integrations are untouched (reported as such).
+6. Note anything that required reading the README. If a step needed
    documentation, the output itself may need fixing.
 
 ## First-run workflow (test this on a fresh machine/account)

@@ -18,9 +18,16 @@ use std::path::Path;
 
 use crate::error::Error;
 
-/// True when the current invocation gets decorative output.
+/// True when the current invocation gets decorative output: stdout is a
+/// terminal AND `RECALL_PLAIN` is not set.
 pub fn pretty() -> bool {
-    std::io::stdout().is_terminal() && std::env::var_os("RECALL_PLAIN").is_none()
+    decorations_enabled(std::io::stdout().is_terminal())
+}
+
+/// The decision behind `pretty`, split out so tests can inject the
+/// terminal flag and never depend on the test runner's stdout.
+fn decorations_enabled(stdout_is_tty: bool) -> bool {
+    stdout_is_tty && std::env::var_os("RECALL_PLAIN").is_none()
 }
 
 /// The symbol set for one mode (fancy terminal vs plain output).
@@ -93,6 +100,25 @@ pub fn arrow() -> &'static str {
 /// Tip prefix (`💡 Tip:` on a terminal, `Tip:` when piped).
 pub fn tip() -> &'static str {
     style(pretty()).tip
+}
+
+/// The empty-store view: replaces the bare "no memories" line when the
+/// store is brand new and the user is at a real terminal. Plain/piped
+/// output keeps the single line — scripts parse that.
+pub fn print_empty_store() {
+    let s = style(true);
+    println!();
+    println!("{}Recall", s.brain);
+    println!();
+    println!("Your local engineering memory. Nothing here yet.");
+    println!();
+    println!("{}Save your first solution:", s.arrow);
+    println!("  recall capture                  remember a fix you just made");
+    println!("  recall capture --from-shell     after a failed command");
+    println!();
+    println!("{}Later, find it again:", s.search);
+    println!("  recall search \"database connection\"");
+    println!();
 }
 
 /// The first-run welcome: shown once, when the database is first
@@ -188,11 +214,17 @@ mod tests {
     }
 
     #[test]
-    fn arrow_is_plain_when_not_pretty() {
+    fn decorations_require_a_terminal_and_no_plain_override() {
+        // Deterministic: the terminal flag is injected, so this test
+        // never depends on the test runner's stdout. Only this test
+        // touches RECALL_PLAIN in this module (no parallel races).
+        std::env::set_var("RECALL_PLAIN", "1");
+        assert!(!decorations_enabled(true), "RECALL_PLAIN wins");
         std::env::remove_var("RECALL_PLAIN");
-        // No TTY in tests: the piped form is what scripts see and it
-        // must stay ASCII.
-        assert_eq!(arrow(), "->");
-        assert!(arrow().is_ascii());
+        assert!(decorations_enabled(true), "a terminal enables decorations");
+        assert!(!decorations_enabled(false), "piped output stays plain");
+        // The plain style is what scripts see (piped or overridden).
+        assert_eq!(style(false).arrow, "->");
+        assert_eq!(style(true).arrow, "→");
     }
 }

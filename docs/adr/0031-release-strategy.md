@@ -72,12 +72,58 @@ whenever hosting is chosen.
   and become the publish step's input unchanged.
 - **winget / scoop / choco packages** — rejected for now: they require
   a hosted repo + manifests; revisit with the hosting decision.
-- **Installer that modifies PATH/shell config** — rejected: violates
-  the explicit-integrations principle (ADR-0017/0020).
+- **Installer that modifies PATH/shell config** — rejected for the
+  original release: violates the explicit-integrations principle
+  (ADR-0017/0020). Partially superseded by the amendment below for the
+  Windows user PATH only.
 - **Man pages** — rejected (see above).
 - **A `recall uninstall` command** — rejected: deleting the binary from
   inside the running binary is platform-fragile; the four documented
-  actions are simpler, safer, and honest about what each removes.
+  actions are simpler, safer, and honest about what each removes. The
+  amendment below adds an `uninstall.ps1` SCRIPT instead (runs from the
+  bundle/scripts, never from the installed binary), which removes the
+  binary and the PATH entry — the manual actions remain documented.
+
+## Amendment (post-release dogfooding, 2026-08-15) — Windows user PATH
+
+Real dogfooding showed the PATH guidance in the installer was friction:
+a first-time Windows user had to paste a
+`[Environment]::SetEnvironmentVariable(...)` line before `recall` worked
+globally. That is exactly the kind of step that should be automatic —
+it is not an integration (it does not observe, capture, or hook
+anything); it only makes the installed program findable.
+
+Decisions:
+
+- **The Windows installer now appends the bin directory to the USER
+  PATH by default**, via the standard per-user environment-variable
+  API. No administrator rights are required; the SYSTEM PATH is never
+  read for modification and never written; shell profiles and startup
+  files are never touched.
+- **`-SkipPath` opts out** — scripted/CI installation stays
+  deterministic and safe; the opt-out keeps the original
+  explicit-anything-extra principle available.
+- **Strict no-surprise rules** (implemented in `scripts/path.ps1`,
+  test-pinned): the entry is only ever APPENDED; existing entries are
+  preserved byte-for-byte (including empty entries); duplicates are
+  detected case-insensitively, trailing-slash-insensitively, and after
+  environment-variable expansion, and never added twice; idempotency
+  is pinned by test.
+- **The installer reports exactly what changed** (binary copy, PATH
+  addition or "already present"), what did NOT change (SYSTEM PATH,
+  profiles, hooks, database, model), and when a new terminal is needed
+  for the change to take effect.
+- **Linux/macOS installers deliberately do NOT modify PATH or shell
+  profiles**: POSIX has no per-user environment-variable API, so the
+  only equivalent would edit `~/.bashrc`/`~/.zshrc` — which the
+  explicit-integrations principle forbids. The installer prints the
+  one-line guidance and explains the asymmetry.
+- **`scripts/uninstall.ps1`** completes the Windows story: removes the
+  Recall bin directory from the USER PATH (preserving every other
+  entry byte-for-byte), deletes `recall.exe`, and removes the bin
+  directory only when empty. It never touches the database, the model,
+  or the integrations — those explicit steps stay exactly as the
+  original decision documents. Idempotent, test-pinned.
 
 ## Consequences
 
@@ -86,3 +132,9 @@ checklist; artifacts are verifiable (checksums, smoke test); installs
 are explicit and reversible; upgrades and old exports are pinned by
 tests. The remaining gap — actual publication — is one documented step
 blocked on the SOT hosting decision, not on Recall engineering.
+
+After the amendment: on Windows, download → install → new terminal →
+`recall` works end to end with no manual steps; the user PATH change
+is minimal, reversible (`uninstall.ps1`), and fully transparent in the
+installer output. The explicit-integrations principle is unchanged for
+everything that is actually an integration (shell, git, embeddings).

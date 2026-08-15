@@ -123,6 +123,8 @@ Release bundles contain the binary, checksums, and the install scripts
 ```powershell
 # Windows: from a release bundle directory (checksums verified)
 powershell -File install.ps1 -From dist\recall-1.0.0-windows-x86_64
+# ...then open a NEW terminal and run:
+recall capture
 ```
 
 ```bash
@@ -133,28 +135,36 @@ sh install.sh /path/to/release-dir
 Or build from source: `cargo install --path codebase/recall` (add
 `--features download` if you want the model downloader).
 
-The install script copies the binary into a user bin directory
+The Windows installer copies the binary into a user bin directory
 (`~/.recall/bin` by default), verifies the SHA256 checksums when
-present, then prints exactly what changed (one copied binary), how to
-verify it (`recall version`), PATH guidance, and the next step. It
-never touches PATH, shell profiles, integrations, your database, or the
-model — those are separate, explicit steps (`recall shell install`,
-`recall git install`, `recall embeddings download`).
+present, and appends that directory to your **user** PATH (pass
+`-SkipPath` to keep PATH unchanged). It then prints exactly what
+changed and what did not: the SYSTEM PATH, shell profiles, hooks,
+your database, and the model are never touched — those are separate,
+explicit steps (`recall shell install`, `recall git install`,
+`recall embeddings download`). Running it twice is safe: no duplicate
+PATH entries are ever added. A new terminal is needed for the PATH
+change to take effect; the installer says so.
 
-### Uninstall
+On Linux/macOS the installer does **not** modify your PATH or shell
+profiles (POSIX has no per-user PATH API, and Recall never edits
+startup files); it prints the one-line guidance instead.
 
-Four separate, explicit actions — an uninstall never deletes your
-memories:
+### Uninstall (Windows)
 
-1. delete the installed binary (`~/.recall/bin/recall` or wherever it
-   was installed);
-2. `recall shell uninstall` — removes the prompt-hook block from your
-   shell profile;
-3. `recall git install`'s counterpart: `recall git uninstall` in each
-   repository (user hook content is preserved);
-4. only if you truly want to: delete the database file and the model
-   directory yourself (`recall` never deletes them). Back up first:
-   `recall export --path backup.json`.
+`scripts/uninstall.ps1` removes the binary and the Recall PATH entry
+(preserving every other entry), and never touches your memories or the
+integrations:
+
+```powershell
+powershell -File uninstall.ps1
+```
+
+Then, if you also want the integrations gone, run `recall shell
+uninstall` and `recall git uninstall` BEFORE deleting the binary.
+Your memories (the database and the model) are never deleted by any
+Recall script — if you truly want them gone, delete those files
+yourself after backing up with `recall export --path backup.json`.
 
 ## How it works
 
@@ -246,8 +256,10 @@ What is encrypted, what is redacted, what never leaves the machine
   (`RECALL_LAST_COMMAND`, `RECALL_LAST_EXIT_CODE`, `RECALL_LAST_CWD`)
   plus home-location variables; it never enumerates the environment
   (pinned by test).
-- **Logs carry no content.** Tracing events record ids, counts, and
-  metadata — never memory text or query terms (pinned by test).
+- **Logs carry no content.** The structured event log is off by
+  default (everyday commands print nothing); `--verbose` turns it on,
+  recording ids, counts, and metadata — never memory text or query
+  terms (pinned by test).
 - **Corruption fails loud.** A damaged database refuses to open with a
   message carrying the recovery model: `recall check` to diagnose,
   restore the `<db>.pre-migration-backup` snapshot, or re-import a

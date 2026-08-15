@@ -55,17 +55,28 @@ cargo run --quiet -- version
 
 ## 4. Install / uninstall
 
-- [ ] Install: `powershell -File ..\scripts\install.ps1 -From
-      dist\recall-<version>-windows-x86_64 -BinDir <temp>` — checksum
-      verifies, binary lands in the bin dir, guidance printed.
+- [ ] Install (PATH-aware): `powershell -File ..\scripts\install.ps1
+      -From dist\recall-<version>-windows-x86_64 -BinDir <temp>` —
+      checksum verifies, binary lands in the bin dir, the bin dir is
+      appended to the USER path, and the output states what changed
+      and what did not.
+- [ ] PATH already present: run the installer again against the same
+      `-BinDir` — output says the path entry already exists; the user
+      PATH value is byte-identical (no duplicate).
+- [ ] PATH opt-out: install with `-SkipPath` — output says PATH was
+      skipped; the user PATH is untouched.
 - [ ] Idempotent: run it twice — second run succeeds.
 - [ ] Tamper check: flip a byte in the bundle's recall.exe, install with
       checksums on → refuses.
-- [ ] Uninstall: delete the installed binary, `recall shell uninstall`,
-      `recall git uninstall` in each repo — the database and the model
-      are never touched by uninstall (documented in README).
+- [ ] Uninstall: `powershell -File ..\scripts\uninstall.ps1 -BinDir
+      <temp>` — binary removed, the Recall path entry removed with
+      every other entry preserved, the bin dir removed only when empty.
+      `recall shell uninstall`, `recall git uninstall` in each repo —
+      the database and the model are never touched by uninstall
+      (documented in README).
 - [ ] (Linux/macOS, on those hosts) `sh scripts/install.sh <release-dir>`
-      with the per-OS build.
+      with the per-OS build — prints the PATH guidance; never edits
+      profiles (ADR-0031 amendment).
 
 ## 5. Upgrade paths
 

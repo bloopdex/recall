@@ -14,12 +14,23 @@ pub const DEFAULT_LIMIT: usize = 20;
 pub fn run(db: &Db, limit: usize, filter: &SearchFilter) -> Result<()> {
     let memories = db.list_memories_filtered(filter, limit)?;
     if memories.is_empty() {
-        println!("No memories found (try --archived to see archived ones).");
-        if crate::ui::pretty() {
-            println!(
-                "{}capture something first: recall capture",
-                crate::ui::tip()
-            );
+        // A brand-new store gets the friendly empty-store view on a real
+        // terminal; a filtered-empty store (e.g. everything archived)
+        // keeps the plain message. Piped output always stays plain.
+        let total: i64 = db.with_connection(|c| {
+            c.query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+                .unwrap_or(1) // a failed count must never claim the store is empty
+        });
+        if crate::ui::pretty() && total == 0 {
+            crate::ui::print_empty_store();
+        } else {
+            println!("No memories found (try --archived to see archived ones).");
+            if crate::ui::pretty() {
+                println!(
+                    "{}capture something first: recall capture",
+                    crate::ui::tip()
+                );
+            }
         }
         return Ok(());
     }
