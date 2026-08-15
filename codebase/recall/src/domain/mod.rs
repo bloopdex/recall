@@ -10,3 +10,4 @@
 //! `git_changed_files`, `cwd`. Required: `problem`, `solution`.
 
 pub mod memory;
+pub mod sanitize;

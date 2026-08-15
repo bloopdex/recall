@@ -5,12 +5,18 @@
 Recall is a single-process local CLI: a thin `main` binary over a library crate.
 
 ```
-recall (bin) ──► cli (clap) ──► application (capture / search / list)
+recall (bin) ──► cli (clap) ──► application (capture / search / list / shell / git_hooks)
                                    │                │
                                    ▼                ▼
-                             domain::memory   infrastructure::database (SQLite + FTS5)
-                             (pure model)     infrastructure::git (best-effort metadata)
+                             domain::memory     infrastructure::database (SQLite + FTS5 + vec0)
+                             domain::sanitize   infrastructure::git (metadata + hook lifecycle)
+                                                infrastructure::shell (prompt-hook snippets)
 ```
+
+Phase 4 adds two observation paths around the existing capture flow:
+the shell prompt hook records failed commands into env vars
+(`recall capture --from-shell`), and a post-commit git hook invokes
+`recall capture --from-git` after successful commits (ADR-0017/0019).
 
 ## Boundaries and dependency direction
 
@@ -68,3 +74,7 @@ capture time, log `search.run` with `search_duration_ms`.
 - ADR-0014 — vector storage (sqlite-vec vec0, derived index)
 - ADR-0015 — embedding storage & versioning (enrichment layer, rebuild)
 - ADR-0016 — hybrid ranking (reciprocal-rank fusion)
+- ADR-0017 — shell integration (prompt-hook observation, never a proxy)
+- ADR-0018 — shell output sanitization & privacy (redact → show → confirm)
+- ADR-0019 — git integration (non-blocking post-commit hook, explicit gate)
+- ADR-0020 — hook installation & preservation (marked blocks, never overwrite)

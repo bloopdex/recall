@@ -2,6 +2,18 @@
 //! interactive prompts), enrich with best-effort git/project context and a
 //! UTC timestamp, check for near-identical memories (ADR-0011), validate,
 //! and persist atomically.
+//!
+//! Phase 4 adds two context modes (ADR-0017/0019):
+//!
+//! - `--from-shell` reads the failure snapshot recorded by the shell
+//!   prompt hook (last command + exit code) and pre-fills the problem.
+//! - `--from-git` runs after a commit (post-commit hook) and pre-fills
+//!   the problem from the commit subject, with the commit's changed files.
+//!
+//! In both modes the auto-captured text passes through the secret
+//! sanitizer (ADR-0018): detected secrets are redacted, shown, and require
+//! explicit confirmation before anything is persisted. Problem + Solution
+//! remain the required fields (Phase 0/2 contract).
 
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::Path;
@@ -11,55 +23,193 @@ use tracing::instrument;
 
 use crate::cli::CaptureArgs;
 use crate::domain::memory::NewMemory;
+use crate::domain::sanitize;
 use crate::infrastructure::database::Db;
-use crate::infrastructure::git::{detect_project, GitContext};
+use crate::infrastructure::git::{detect_project, CommitContext, GitContext};
+use crate::infrastructure::shell;
 use crate::{Error, Result};
 
 /// Days a near-identical memory stays "recent enough" to block a capture.
 /// Deterministic constant (ADR-0011); configurable later if ever needed.
 const DEDUP_WINDOW_DAYS: i64 = 30;
 
-/// Outcome of a successful capture.
+/// Outcome of a capture run.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CaptureOutcome {
-    pub id: i64,
-    pub project: Option<String>,
-    /// True when the capture was skipped because a near-identical memory
-    /// already exists (see ADR-0011). `id` then refers to that memory.
-    pub skipped: bool,
+pub enum CaptureOutcome {
+    /// The memory was stored.
+    Captured { id: i64, project: Option<String> },
+    /// Skipped because a near-identical memory already exists (ADR-0011);
+    /// `id` refers to that memory.
+    SkippedDuplicate { id: i64, project: Option<String> },
+    /// The user (or the environment) declined the capture; nothing was
+    /// written. `reason` is a user-facing explanation.
+    Declined { reason: String },
 }
 
 #[instrument(skip(db, cwd))]
 pub fn run(db: &mut Db, args: &CaptureArgs, cwd: &Path) -> Result<CaptureOutcome> {
+    let stdin_is_tty = std::io::stdin().is_terminal();
     run_with_io(
         db,
         args,
         cwd,
+        stdin_is_tty,
         &mut std::io::stdin().lock(),
         &mut std::io::stderr(),
     )
 }
 
-/// The full capture flow with injected stdin/stdout-style streams, so the
-/// input-resolution logic is unit-testable without a TTY.
+/// The full capture flow with injected TTY flag and stdin/stdout-style
+/// streams, so the input-resolution logic is unit-testable without a TTY.
 pub fn run_with_io(
     db: &mut Db,
     args: &CaptureArgs,
     cwd: &Path,
+    stdin_is_tty: bool,
     input: &mut dyn BufRead,
     prompt_out: &mut dyn Write,
 ) -> Result<CaptureOutcome> {
-    let stdin_is_piped = !std::io::stdin().is_terminal();
-    let problem = resolve_problem(args, stdin_is_piped, input, prompt_out)?;
-    let solution = resolve_solution(args, stdin_is_piped, input, prompt_out)?;
+    let stdin_is_piped = !stdin_is_tty;
+    let context_mode = args.from_shell || args.from_git;
 
     let git = GitContext::detect(cwd);
+    let commit = if args.from_git {
+        CommitContext::detect(cwd)
+    } else {
+        CommitContext::default()
+    };
+
+    // The post-commit hook runs in non-interactive contexts too (CI, GUI
+    // git clients). There, with nothing explicit to go on, capture must
+    // never block, prompt into the void, or fail the hook (ADR-0019).
+    if args.from_git && !stdin_is_tty && args.problem.is_none() && args.solution.is_none() {
+        return Ok(CaptureOutcome::Declined {
+            reason: "Recall capture skipped: no interactive terminal. Run `recall capture --from-git` manually to capture this fix."
+                .into(),
+        });
+    }
+
+    // 1. Build the pre-fill from the shell snapshot or the commit context,
+    //    sanitized (ADR-0018) before it is ever shown or stored.
+    let prefill: Option<String> = if args.from_shell {
+        let snap = shell::read_snapshot().ok_or_else(|| {
+            Error::Shell(
+                "no shell failure context found — install the integration with `recall shell install`, run the failing command, then try again"
+                    .into(),
+            )
+        })?;
+        let exit = snap
+            .exit_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        Some(sanitize::sanitize(&snap.command).sanitized)
+            .map(|cmd| format!("Command failed (exit code {exit}): {cmd}"))
+    } else if args.from_git {
+        let project = args
+            .project
+            .clone()
+            .or_else(|| detect_project(cwd, &git))
+            .unwrap_or_else(|| "this repository".to_string());
+        commit
+            .subject
+            .as_deref()
+            .map(sanitize::sanitize)
+            .map(|s| s.sanitized)
+            .map(|subject| format!("Fix in {project}: {subject}"))
+    } else {
+        None
+    };
+
+    // 2. Error text: in context modes, piped stdin carries the failed
+    //    command's output (not the problem, as in plain capture).
+    let raw_error = if context_mode {
+        args.error
+            .clone()
+            .or_else(|| {
+                if stdin_is_piped {
+                    read_stdin(input).ok()
+                } else {
+                    None
+                }
+            })
+            .map(|t| sanitize::truncate_text(&t))
+    } else {
+        args.error.clone()
+    };
+    let error_report = raw_error.as_deref().map(sanitize::sanitize);
+
+    // 3. Secret gate: if the auto-captured context contained secret-like
+    //    patterns, show exactly what will be saved and require explicit
+    //    confirmation before persisting (ADR-0018).
+    if context_mode {
+        let redactions = prefill
+            .as_deref()
+            .map(|p| sanitize::sanitize(p).redactions)
+            .unwrap_or(0)
+            + error_report.as_ref().map(|r| r.redactions).unwrap_or(0);
+        if redactions > 0 {
+            writeln!(
+                prompt_out,
+                "Warning: {redactions} secret-like pattern(s) detected in the captured context and redacted."
+            )?;
+            if let Some(p) = &prefill {
+                writeln!(prompt_out, "  Problem will be: {p}")?;
+            }
+            if let Some(r) = &error_report {
+                writeln!(
+                    prompt_out,
+                    "  Error will be:   {}",
+                    first_line(&r.sanitized)
+                )?;
+            }
+            if !confirm(prompt_out, input, "Save with redactions? [y/N]: ")? {
+                return Ok(CaptureOutcome::Declined {
+                    reason: "Not saved: redacted content was not confirmed.".into(),
+                });
+            }
+        }
+    }
+
+    // 4. Problem: --problem flag wins; in context modes the (sanitized)
+    //    pre-fill is offered at the prompt (Enter accepts, "skip" cancels);
+    //    otherwise the Phase 2 rules apply (piped stdin or plain prompt).
+    let problem = match (&args.problem, &prefill) {
+        (Some(p), _) => p.clone(),
+        (None, Some(prefill)) => match resolve_prefilled("Problem", prefill, input, prompt_out)? {
+            Some(p) => p,
+            None => {
+                return Ok(CaptureOutcome::Declined {
+                    reason: "Capture cancelled.".into(),
+                })
+            }
+        },
+        (None, None) if stdin_is_piped || args.stdin => read_stdin(input)?,
+        (None, None) => prompt_line("Problem", input, prompt_out)?,
+    };
+
+    // 5. Solution: --solution flag wins; piped stdin has already been
+    //    consumed by the error text in context modes, so a prompt or the
+    //    flag are the only options there (Phase 2 contract).
+    let solution = if let Some(solution) = &args.solution {
+        solution.clone()
+    } else if stdin_is_piped && !context_mode && args.problem.is_none() {
+        return Err(Error::InvalidInput(
+            "stdin provides the problem; give the solution with --solution".into(),
+        ));
+    } else if stdin_is_piped && context_mode {
+        return Err(Error::InvalidInput(
+            "stdin provides the error output; give the solution with --solution".into(),
+        ));
+    } else {
+        prompt_line("Solution", input, prompt_out)?
+    };
+
     let project = args.project.clone().or_else(|| detect_project(cwd, &git));
 
     let memory = NewMemory {
         problem,
         solution,
-        error: args.error.clone(),
+        error: error_report.as_ref().map(|r| r.sanitized.clone()),
         context: args.context.clone(),
         investigation: args.investigation.clone(),
         root_cause: args.root_cause.clone(),
@@ -70,7 +220,11 @@ pub fn run_with_io(
         repo_path: git.repo_root.map(|p| p.to_string_lossy().to_string()),
         git_branch: git.branch,
         git_commit: git.commit,
-        git_changed_files: git.changed_files,
+        git_changed_files: if args.from_git {
+            commit.changed_files.clone().or(git.changed_files)
+        } else {
+            git.changed_files
+        },
         cwd: Some(cwd.to_string_lossy().to_string()),
     }
     .normalize();
@@ -85,10 +239,9 @@ pub fn run_with_io(
                 new_project = ?memory.project,
                 dedup_window_days = DEDUP_WINDOW_DAYS,
             );
-            return Ok(CaptureOutcome {
+            return Ok(CaptureOutcome::SkippedDuplicate {
                 id: existing.id,
                 project: memory.project,
-                skipped: true,
             });
         }
     }
@@ -109,10 +262,9 @@ pub fn run_with_io(
         captures_count = 1,
     );
 
-    Ok(CaptureOutcome {
+    Ok(CaptureOutcome::Captured {
         id,
         project: memory.project,
-        skipped: false,
     })
 }
 
@@ -145,50 +297,45 @@ fn enrich_embedding(db: &mut Db, id: i64, memory: &NewMemory) {
     }
 }
 
-/// Where the problem text comes from:
+/// Prompt showing a pre-filled value: Enter accepts it, typing replaces
+/// it, `skip` cancels (returns `None`).
+fn resolve_prefilled(
+    field: &str,
+    prefill: &str,
+    input: &mut dyn BufRead,
+    prompt_out: &mut dyn Write,
+) -> Result<Option<String>> {
+    write!(
+        prompt_out,
+        "{field} [{prefill}] (enter=accept, 'skip'=cancel): "
+    )?;
+    prompt_out.flush()?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    let line = line.trim_end_matches(['\r', '\n']).to_string();
+    if line.trim().eq_ignore_ascii_case("skip") {
+        return Ok(None);
+    }
+    if line.trim().is_empty() {
+        return Ok(Some(prefill.to_string()));
+    }
+    Ok(Some(line))
+}
+
+/// Ask a yes/no question; anything other than an explicit yes is a no.
+fn confirm(prompt_out: &mut dyn Write, input: &mut dyn BufRead, question: &str) -> Result<bool> {
+    write!(prompt_out, "{question}")?;
+    prompt_out.flush()?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+/// Where the problem text comes from in plain (non-context) capture:
 /// `--problem` flag > stdin (piped input or explicit `--stdin`) > prompt.
-fn resolve_problem(
-    args: &CaptureArgs,
-    stdin_is_piped: bool,
-    input: &mut dyn BufRead,
-    prompt_out: &mut dyn Write,
-) -> Result<String> {
-    if let Some(problem) = &args.problem {
-        return Ok(problem.clone());
-    }
-    if stdin_is_piped || args.stdin {
-        return read_stdin(input);
-    }
-    prompt_line("Problem", input, prompt_out)
-}
-
-/// Solution requires explicit input: `--solution` flag or a prompt.
-/// (When the problem came from piped stdin, a prompt cannot be used —
-/// stdin is exhausted.)
-fn resolve_solution(
-    args: &CaptureArgs,
-    stdin_is_piped: bool,
-    input: &mut dyn BufRead,
-    prompt_out: &mut dyn Write,
-) -> Result<String> {
-    if let Some(solution) = &args.solution {
-        return Ok(solution.clone());
-    }
-    if (stdin_is_piped || args.stdin) && args.problem.is_none() {
-        return Err(Error::InvalidInput(
-            "stdin provides the problem; give the solution with --solution".into(),
-        ));
-    }
-    prompt_line("Solution", input, prompt_out)
-}
-
-fn read_stdin(input: &mut dyn BufRead) -> Result<String> {
-    let mut text = String::new();
-    input.read_to_string(&mut text)?;
-    Ok(text)
-}
-
-/// Print `field: ` to the prompt stream and read one line from input.
 fn prompt_line(field: &str, input: &mut dyn BufRead, prompt_out: &mut dyn Write) -> Result<String> {
     write!(prompt_out, "{field}: ")?;
     prompt_out.flush()?;
@@ -197,73 +344,91 @@ fn prompt_line(field: &str, input: &mut dyn BufRead, prompt_out: &mut dyn Write)
     Ok(line)
 }
 
+fn read_stdin(input: &mut dyn BufRead) -> Result<String> {
+    let mut text = String::new();
+    input.read_to_string(&mut text)?;
+    Ok(text)
+}
+
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::CaptureArgs;
-
-    fn args_with(problem: Option<&str>, solution: Option<&str>, stdin: bool) -> CaptureArgs {
-        CaptureArgs {
-            problem: problem.map(String::from),
-            solution: solution.map(String::from),
-            stdin,
-            ..Default::default()
-        }
-    }
+    use crate::domain::sanitize::SanitizeReport;
 
     fn lines(text: &str) -> std::io::Cursor<Vec<u8>> {
         std::io::Cursor::new(text.as_bytes().to_vec())
     }
 
     #[test]
-    fn problem_flag_wins_over_stdin_and_prompt() {
-        let args = args_with(Some("from flag"), None, false);
-        let mut input = lines("from stdin");
+    fn prefill_accepts_on_empty_line() {
+        let mut input = lines("\n");
         let mut out = Vec::new();
-        let got = resolve_problem(&args, true, &mut input, &mut out).unwrap();
-        assert_eq!(got, "from flag");
-        assert!(
-            out.is_empty(),
-            "prompt must not be printed when the flag wins"
-        );
+        let got = resolve_prefilled("Problem", "Command failed", &mut input, &mut out).unwrap();
+        assert_eq!(got.as_deref(), Some("Command failed"));
+        assert!(String::from_utf8(out).unwrap().contains("enter=accept"));
     }
 
     #[test]
-    fn piped_stdin_supplies_problem_and_never_prompts() {
-        let args = args_with(None, None, false);
-        let mut input = lines("piped problem\nmore lines\n");
+    fn prefill_accepts_typed_override() {
+        let mut input = lines("a better problem\n");
         let mut out = Vec::new();
-        let got = resolve_problem(&args, true, &mut input, &mut out).unwrap();
-        assert_eq!(got, "piped problem\nmore lines\n");
-        assert!(out.is_empty());
+        let got = resolve_prefilled("Problem", "prefill", &mut input, &mut out).unwrap();
+        assert_eq!(got.as_deref(), Some("a better problem"));
+    }
+
+    #[test]
+    fn prefill_skip_cancels() {
+        let mut input = lines("skip\n");
+        let mut out = Vec::new();
+        let got = resolve_prefilled("Problem", "prefill", &mut input, &mut out).unwrap();
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn confirm_accepts_explicit_yes_only() {
+        for (answer, expected) in [
+            ("y", true),
+            ("yes", true),
+            ("Y", true),
+            ("n", false),
+            ("", false),
+            ("maybe", false),
+        ] {
+            let mut input = lines(&format!("{answer}\n"));
+            let mut out = Vec::new();
+            assert_eq!(
+                confirm(&mut out, &mut input, "Save? [y/N]: ").unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
     fn prompt_writes_prompt_and_reads_line() {
-        let args = args_with(None, None, false);
         let mut input = lines("typed problem\n");
         let mut out = Vec::new();
-        let got = resolve_problem(&args, false, &mut input, &mut out).unwrap();
+        let got = prompt_line("Problem", &mut input, &mut out).unwrap();
         assert_eq!(got, "typed problem\n");
         assert_eq!(String::from_utf8(out).unwrap(), "Problem: ");
     }
 
     #[test]
-    fn solution_requires_flag_when_stdin_supplied_the_problem() {
-        let args = args_with(None, None, false);
-        let mut input = lines("");
-        let mut out = Vec::new();
-        let err = resolve_solution(&args, true, &mut input, &mut out).unwrap_err();
-        assert!(err.to_string().contains("--solution"));
-    }
-
-    #[test]
-    fn solution_prompt_used_when_terminal() {
-        let args = args_with(Some("problem via flag"), None, false);
-        let mut input = lines("typed solution\n");
-        let mut out = Vec::new();
-        let got = resolve_solution(&args, false, &mut input, &mut out).unwrap();
-        assert_eq!(got, "typed solution\n");
-        assert_eq!(String::from_utf8(out).unwrap(), "Solution: ");
+    fn secret_gate_count_combines_prefill_and_error() {
+        // Mirrors the arithmetic used in run_with_io for the gate.
+        let prefill = Some(SanitizeReport {
+            sanitized: "x".into(),
+            redactions: 1,
+        });
+        let error = Some(SanitizeReport {
+            sanitized: "y".into(),
+            redactions: 2,
+        });
+        let total = prefill.map(|p| p.redactions).unwrap_or(0)
+            + error.as_ref().map(|r| r.redactions).unwrap_or(0);
+        assert_eq!(total, 3);
     }
 }

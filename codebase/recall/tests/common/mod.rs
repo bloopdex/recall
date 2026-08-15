@@ -15,6 +15,7 @@ pub fn bin() -> &'static str {
 /// The embedding model is neutralized via `RECALL_MODEL_DIR` so CLI tests
 /// stay fast and deterministic — real-model behavior is covered in
 /// `tests/embeddings_integration.rs`.
+#[allow(dead_code)]
 pub fn run(db: &Path, cwd: Option<&Path>, args: &[&str], stdin_text: Option<&str>) -> Output {
     let mut cmd = Command::new(bin());
     cmd.arg("--db").arg(db);

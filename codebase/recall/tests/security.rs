@@ -113,3 +113,33 @@ fn capture_does_not_auto_collect_environment_variables() {
         "capture must not read environment variables"
     );
 }
+
+/// ADR-0010 amendment (Phase 4): the ONLY module allowed to read
+/// environment variables is `infrastructure/shell.rs`, and it may read
+/// exactly the whitelist below — the three snapshot variables written by
+/// Recall's own prompt hook, plus the home/shell-location variables needed
+/// to find startup files. It never enumerates the environment, and nothing
+/// outside the whitelist can enter a memory.
+#[test]
+fn shell_integration_reads_only_whitelisted_environment_variables() {
+    const ALLOWED: &[&str] = &[
+        "RECALL_LAST_COMMAND",
+        "RECALL_LAST_EXIT_CODE",
+        "RECALL_LAST_CWD",
+        "HOME",
+        "USERPROFILE",
+        "SHELL",
+    ];
+    let source = std::fs::read_to_string("src/infrastructure/shell.rs").unwrap();
+    for line in source.lines() {
+        let Some(pos) = line.find("env::var(\"") else {
+            continue;
+        };
+        let rest = &line[pos + "env::var(\"".len()..];
+        let name = rest.split('"').next().unwrap_or("");
+        assert!(
+            ALLOWED.contains(&name),
+            "shell.rs reads environment variable '{name}' outside the Phase 4 whitelist"
+        );
+    }
+}

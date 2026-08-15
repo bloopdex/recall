@@ -61,3 +61,21 @@ The runtime guarantee — Recall never contacts the network — holds:
 every network-capable code path in the linked binary is dead code from
 Recall's perspective, and model presence is verified before any embedder
 construction.
+
+## Amendment 2 (2026-08-15, ADR-0017)
+
+The Phase 4 shell integration transports the failure snapshot through
+environment variables (`RECALL_LAST_COMMAND`, `RECALL_LAST_EXIT_CODE`,
+`RECALL_LAST_CWD`), which requires reading three named variables — a
+narrow, documented exception to the "capture reads no environment"
+construction rule. The rule is amended, not weakened:
+
+- `application/capture.rs` still reads **no** process environment (the
+  original pin test remains).
+- The only module allowed to read environment variables is
+  `infrastructure/shell.rs`, and only the whitelist:
+  `RECALL_LAST_COMMAND`, `RECALL_LAST_EXIT_CODE`, `RECALL_LAST_CWD`,
+  `HOME`, `USERPROFILE`, `SHELL` — pinned by a dedicated security test.
+- The snapshot variables are written by Recall's own prompt hook, never
+  enumerated: `std::env::vars()` remains absent from the codebase, and
+  no environment content can enter a memory beyond the whitelist.

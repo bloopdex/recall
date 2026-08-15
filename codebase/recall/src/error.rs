@@ -34,6 +34,9 @@ pub enum Error {
 
     #[error("embedding error: {0}")]
     Embedding(String),
+
+    #[error("shell integration error: {0}")]
+    Shell(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

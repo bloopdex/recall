@@ -91,3 +91,50 @@ Hybrid matches or exceeds FTS everywhere; on paraphrase queries it finds
 every target (7 of 8 at rank 1), where keyword search is structurally
 unable to. Re-run after any ranking/model change.
 
+## Phase 4 — shell & git integration baselines (recorded 2026-08-15)
+
+Machine: Windows 11, 16 logical CPUs, release build
+(`scripts/bench_phase4.ps1` + `examples/bench_sanitize.rs`).
+
+**Prompt-hook overhead** (PowerShell, 200 prompt invocations per variant):
+
+| Variant | Avg per invocation |
+|---|---|
+| Plain `prompt` function (baseline) | 0.644 ms |
+| Recall prompt hook (snapshot recording) | 1.119 ms |
+| **Overhead** | **0.475 ms** |
+
+Phase 4 budget: the prompt must add <50 ms to the shell path. Measured
+overhead is ~100x under budget — the hook is invisible to typing latency.
+
+**`recall capture --from-shell` end-to-end** (spawned release binary,
+snapshot env vars set, git context present, 20 runs):
+
+- **118.3 ms/capture** — statistically the same as the Phase 2 plain
+  capture baseline (117.3 ms); the snapshot read + sanitization scan
+  cost is within noise. Process startup and the four git subprocess
+  calls continue to dominate (Phase 2 findings unchanged).
+
+**Git post-commit hook overhead** (10 commits each, non-interactive skip
+path):
+
+| Variant | Avg per commit |
+|---|---|
+| With recall hook installed | 85.3 ms |
+| Without hook | 86.8 ms |
+| **Overhead** | **≈ 0 ms** (noise-dominated) |
+
+The skip path (`command -v recall` + TTY check) is unmeasurable against
+git's own commit-time variance. The reliability boundary costs nothing
+in the common case.
+
+**Secret sanitization throughput** (`examples/bench_sanitize.rs`):
+
+- 3.4 KB realistic error log (7 secret shapes), 500 iterations:
+  **156 µs/scan ≈ 21 MB/s**. At the 10 KB captured-text limit that is
+  ~0.5 ms — negligible against the 118 ms capture.
+
+**Conclusion:** every Phase 4 latency budget is met with orders of
+magnitude to spare; no optimization was performed because none is
+warranted by the measurements.
+
