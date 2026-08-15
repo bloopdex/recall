@@ -1,0 +1,82 @@
+# Post-release audit — v1.0.0 (2026-08-15)
+
+A final documentation-quality and consistency pass over the released
+project. The implementation is the source of truth; nothing was changed
+to make documentation look better — only genuine inconsistencies were
+fixed, and no behavior changed.
+
+## What was audited
+
+- Source of Truth (both copies), README, CHANGELOG, SECURITY,
+  CONTRIBUTING, all 32 ADRs (0000–0031), docs/ (development, database,
+  ci, release), the Logseq Recall main page, and the Phase 0–7 Logseq
+  subpages.
+- The actual codebase and tests, the CLI surface (`--help` for every
+  subcommand), the release bundle, the git tag, and both working trees.
+
+## What was verified (all clean)
+
+- **Validation suite:** 247 tests across 37 suites, all green; `cargo
+  fmt --check` clean; `clippy --all-targets --all-features -- -D
+  warnings` clean; zero-network script + the in-test dependency-tree
+  scan pass; `cargo build --features download` compiles.
+- **Release artifacts:** `dist/recall-1.0.0-windows-x86_64/` —
+  SHA256SUMS matches the binary's actual hash; the bundled install
+  scripts are byte-identical to `scripts/`; the bundle binary prints
+  `recall 1.0.0`.
+- **Version consistency:** Cargo.toml, CHANGELOG, bundle, and the tag
+  agree on 1.0.0; tag `v1.0.0` points at commit `a992902` (the Phase 7
+  release commit). Both repositories have clean working trees.
+- **ADR integrity:** 32 ADR files, zero dangling references anywhere
+  in docs or code; every Phase 6/7 amendment is present in the ADR it
+  belongs to (0003, 0006×2, 0009, 0010×3, 0018, 0024, 0027).
+- **CLI documentation coverage:** all 15 subcommands (capture, edit,
+  search, embeddings, list, projects, check, version, archive,
+  unarchive, delete, export, import, shell, git) appear in `--help` and
+  in the README.
+- **No feature documented as working that is not implemented** (every
+  CHANGELOG bullet checked against the code).
+- **Phase pages follow the Phase 0 style** (small `#####` sections,
+  nested bullets, research → decision → implementation → verification;
+  detailed research lives on subpages, not the main page).
+
+## Inconsistencies found and fixed
+
+1. **Test count 248 → 247** (SOT section 8 row + changelog; Phase 7
+   Logseq page). The Phase 7 config env-var race fix merged two tests
+   into one AFTER the count was recorded. Corrected everywhere, with a
+   note in the Phase 7 page.
+2. **SOT Section 0 rule 1** claimed "All 9 projects are in Phase 0. No
+   code has been written" — contradicting the file's own Section 8
+   Recall row. Now states Recall as the implemented exception (v1.0.0,
+   Phases 0–7).
+3. **SOT Section 8 bullet** "Nothing is implemented. No repositories,
+   no code…" — same contradiction. Now: "Nothing is implemented EXCEPT
+   Recall".
+4. **SOT Assumptions §3** "Nothing in the 9 projects is implemented" —
+   same fix ("Except for Recall").
+5. **Recall main Logseq page** still said "Current blockers: none yet —
+   starting Phase 0." Now: "none — all phases complete (v1.0.0
+   released)", with the publication blocker noted (hosting decision).
+6. **ADR-0027** carried the Phase 7 contention-guarantee reframe
+   inline without the amendment labeling every other post-hoc ADR
+   change uses. Added a proper "Amendment (Phase 7, 2026-08-15)"
+   section; the decision body now points to it.
+
+## Remaining limitations (unchanged, documented elsewhere)
+
+- Publication of the release bundle is blocked on the hosting decision
+  (SOT open decision #3) — the release checklist's final step.
+- DeployScore feed deferred: no interface exists (ADR-0029, revisit
+  conditions recorded).
+- Encryption at rest rejected with revisit conditions (ADR-0026).
+- macOS build documented but not executed; GitHub Actions is the only
+  tested CI (ADR-0030/0031).
+- Binary 24.7 MB (above the original <10 MB aspiration — recorded,
+  not gated); SQLite payload-flip detection limitation (ADR-0027).
+
+## Final release state
+
+Recall **v1.0.0**, Phases 0–7 complete, tag on commit `a992902`, 247
+tests green, release bundle with verified checksums in `dist/`.
+Release-ready; publication is the single external step.

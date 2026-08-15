@@ -61,17 +61,7 @@ the same SQLite file.
 - **Documented limitations, not hidden ones:** the payload-flip
   detection gap; the last-transaction power-loss window of
   `synchronous = NORMAL`; semantic search's full vec0 scan (ADR-0025);
-  and the write-contention corners: SQLite's 5 s busy timeout can be
-  exhausted by sustained multi-process load (observed during Phase 7
-  validation: even 3 concurrent captures on a warm database can hit it
-  while the full test suite thrashes the disk). The pinned guarantee —
-  load-independent — is therefore: every capture either persists or
-  fails LOUDLY with "database is locked"; silent loss and corruption
-  never happen; every busy-failed capture succeeds on retry; the store
-  stays healthy throughout (pinned by
-  `tests/concurrency.rs::concurrent_captures_never_lose_data_silently`,
-  `highly_contended_captures_never_lose_data_silently`, and
-  `concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy`).
+  and the write-contention corners — see the Phase 7 amendment below.
 
 ## Alternatives considered
 
@@ -95,3 +85,19 @@ hardening regression suite (`tests/concurrency.rs`,
 is user-visible in error messages and docs. If future phases add
 heavier write patterns (batch imports, retention automation), the same
 suites are the place to re-verify.
+
+## Amendment (Phase 7, 2026-08-15) — the contention guarantee reframed
+
+Phase 7 validation surfaced the busy-failure path even at REALISTIC
+concurrency (3 capture processes on a warm database, while the full
+test suite thrashed the disk) — the original "at realistic concurrency
+every capture persists" claim was load-dependent and could not be
+pinned honestly. The guarantee is reframed to its load-independent
+form: SQLite's 5 s busy timeout can be exhausted by sustained
+multi-process load; every capture then either persists or fails LOUDLY
+with "database is locked"; silent loss and corruption never happen;
+every busy-failed capture succeeds on retry; the store stays healthy
+throughout. The concurrency suite was restructured to pin exactly this
+(`concurrent_captures_never_lose_data_silently`,
+`highly_contended_captures_never_lose_data_silently`,
+`concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy`).
