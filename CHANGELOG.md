@@ -88,7 +88,8 @@ checksum-verified install scripts.
   commit can lose that one transaction.
 - Shell integration tested on PowerShell and Bash (generated for Zsh,
   not executed — ADR-0017).
-- No distribution host configured yet: release artifacts are produced
-  locally with checksums (never committed — see
-  `docs/release/RELEASE-CHECKLIST.md`); publication awaits the hosting
-  decision (ADR-0031).
+- No git remote configured yet: once the repository has a GitHub
+  remote, pushing a `vX.Y.Z` tag triggers the release workflow
+  (`.github/workflows/release.yml`) which validates, builds, and
+  publishes the GitHub Release. Release artifacts are never committed
+  (ADR-0031; procedure: `docs/release/RELEASE-CHECKLIST.md`).

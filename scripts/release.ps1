@@ -11,12 +11,13 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Version 1.0.0
 #
-# Publication (attaching the bundle to a GitHub Release) is deliberately
-# NOT part of this script. `dist/` is gitignored: the bundle is generated
-# locally and attached to the GitHub Release for the tag — generated
-# artifacts are never committed (docs/release/RELEASE-CHECKLIST.md).
-# Publication is currently pending a hosting decision; until then the
-# generated bundle directory IS the release artifact.
+# Publication is deliberately NOT part of this script. `dist/` is
+# gitignored: the bundle is generated locally (verification, dogfooding)
+# and by CI (publication). Pushing a `vX.Y.Z` tag triggers the release
+# workflow (.github/workflows/release.yml), which validates the tag
+# against Cargo.toml, rebuilds this bundle, verifies its checksums, and
+# creates the GitHub Release (docs/release/RELEASE-CHECKLIST.md).
+# Generated artifacts are never committed.
 #
 # For Linux/macOS, build on the target OS: `cargo build --release` then
 # copy `target/release/recall` + `scripts/install.sh` into the bundle and
@@ -71,6 +72,7 @@ Write-Host ""
 Write-Host "Next steps (docs/release/RELEASE-CHECKLIST.md):"
 Write-Host "  - run the full validation suite"
 Write-Host "  - test install.ps1 against this bundle"
-Write-Host "  - tag: git tag v$Version"
-Write-Host "  - create the GitHub Release and attach these bundle files"
-Write-Host "    (publication is pending a hosting decision - dist/ stays uncommitted)"
+Write-Host "  - tag:  git tag -a v$Version -m 'Release v$Version'"
+Write-Host "  - push: git push origin main; git push origin v$Version"
+Write-Host "    (the tag push triggers the GitHub Actions release workflow -"
+Write-Host "     dist/ stays uncommitted)"

@@ -125,6 +125,17 @@ Decisions:
   or the integrations — those explicit steps stay exactly as the
   original decision documents. Idempotent, test-pinned.
 
+## Amendment 2 (2026-08-16) — tag-driven GitHub Releases
+
+The publish step is now a workflow, not a manual action. Decisions:
+
+- **Publishing is triggered by pushing a `vX.Y.Z` tag** (`.github/workflows/release.yml`, `on: push: tags: ['v*.*.*']` only). Ordinary branch pushes and pull requests never run the release workflow, and the workflow itself re-verifies `ref_type == 'tag'` plus the strict `^v\d+\.\d+\.\d+$` format before doing anything.
+- **The tag is the request; Cargo.toml is the gate.** The version is extracted from the tag and must equal the `version` in Cargo.toml (strict literal match — anything else fails loudly before a release is created). The workflow never creates or moves tags; a release can only exist for a tag the maintainer pushed.
+- **The workflow reuses the existing tooling**: the same validation suite as the release checklist (fmt, clippy with warnings denied, full tests, zero-network guard + gated download build), then `scripts/release.ps1 -Version <tag>` for the bundle, then an independent SHA256SUMS re-verification, then `gh release create` with the eight bundle files attached (binary, SHA256SUMS, install.ps1/sh, uninstall.ps1, path.ps1, CHANGELOG, LICENSE). Release notes are the existing CHANGELOG file — no generated or invented content.
+- **Minimal permissions and no repository writes**: the workflow has `contents: write` (release creation only) and asserts `git status` stays clean — it never commits, pushes, or uploads `dist/` into the repository.
+- **`v1.0.0` is untouched** and remains the historical release tag; this amendment changes only how future tags get published.
+- Publication still requires a configured git remote; until the repository has one, the local checklist steps 1–8 remain the complete pre-release gate and the generated `dist/` bundle remains the local artifact.
+
 ## Consequences
 
 The release is reproducible from a clean checkout by following the

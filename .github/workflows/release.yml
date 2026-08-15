@@ -1,0 +1,125 @@
+# Tag-driven release workflow.
+#
+# Publishing Recall is one command on the maintainer's side: push a
+# `vX.Y.Z` tag. This workflow runs ONLY on version-tag pushes, verifies
+# the tag against Cargo.toml, runs the full validation suite, builds the
+# release bundle with the existing release tooling, verifies its
+# checksums, and creates the GitHub Release with the bundle attached.
+#
+# Deliberately NOT here: nothing commits or pushes back into the
+# repository, nothing creates or moves tags, and nothing publishes from
+# branch pushes or pull requests. `dist/` is generated CI output and
+# stays gitignored; the repository tree is verified clean before the
+# release is created.
+
+name: Release
+
+# Quoted: unquoted `on` parses as a boolean under YAML 1.1 tooling.
+"on":
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        # A tag push event checks out exactly the tagged commit.
+
+      - name: Verify the tag (strict vMAJOR.MINOR.PATCH)
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -ne 'tag') {
+            throw "the release workflow must run on a tag, got ref type '$env:GITHUB_REF_TYPE'"
+          }
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "malformed release tag '$tag' - expected vMAJOR.MINOR.PATCH (e.g. v1.0.1)"
+          }
+          "VERSION=$($tag.Substring(1))" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "release request: $tag (application version $($tag.Substring(1)))"
+
+      - name: Verify the tag matches Cargo.toml
+        shell: pwsh
+        run: |
+          $manifest = Get-Content codebase\recall\Cargo.toml -Raw
+          # Strict equality: the version is a literal, not a regex.
+          $pattern = 'version\s*=\s*"' + $env:VERSION.Replace('.', '\.') + '"'
+          if ($manifest -notmatch $pattern) {
+            throw "tag $env:GITHUB_REF_NAME requires Cargo.toml version '$env:VERSION' - bump it first"
+          }
+          Write-Host "Cargo.toml version $env:VERSION matches the tag"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format check
+        working-directory: codebase/recall
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings denied)
+        working-directory: codebase/recall
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests (includes the zero-network dependency-tree scan)
+        working-directory: codebase/recall
+        run: cargo test --all-targets
+
+      - name: Zero-network guard (explicit script + gated download build)
+        working-directory: codebase/recall
+        shell: pwsh
+        run: |
+          powershell -NoProfile -File ..\scripts\check_no_network.ps1
+          cargo build --features download
+
+      - name: Build the release bundle
+        shell: pwsh
+        run: |
+          # release.ps1 re-verifies Cargo.toml, builds --release, assembles
+          # dist\recall-<version>-windows-x86_64 (binary, SHA256SUMS,
+          # install/uninstall/path scripts, CHANGELOG, LICENSE) and
+          # smoke-tests the binary.
+          powershell -NoProfile -File scripts\release.ps1 -Version $env:VERSION
+
+      - name: Verify the bundle checksums
+        shell: pwsh
+        run: |
+          $bundle = "dist\recall-$env:VERSION-windows-x86_64"
+          $expected = (Select-String -Path "$bundle\SHA256SUMS" -Pattern '^([0-9a-f]{64})\s+recall\.exe\s*$').Matches[0].Groups[1].Value
+          $actual = (Get-FileHash -Algorithm SHA256 "$bundle\recall.exe").Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "bundle checksum mismatch: expected $expected, got $actual"
+          }
+          Write-Host "SHA256SUMS verified: $actual"
+
+      - name: Verify the working tree stayed clean (dist/ is ignored)
+        shell: pwsh
+        run: |
+          $dirty = git status --porcelain
+          if ($dirty) {
+            throw "the workflow must never modify the repository - unexpected changes:`n$dirty"
+          }
+          Write-Host "working tree clean; dist/ and target/ remain ignored"
+
+      - name: Create the GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $bundle = "dist\recall-$env:VERSION-windows-x86_64"
+          gh release create $env:GITHUB_REF_NAME `
+            "$bundle\recall.exe" `
+            "$bundle\SHA256SUMS" `
+            "$bundle\install.ps1" `
+            "$bundle\install.sh" `
+            "$bundle\uninstall.ps1" `
+            "$bundle\path.ps1" `
+            "$bundle\CHANGELOG.md" `
+            "$bundle\LICENSE" `
+            --title "Recall $env:GITHUB_REF_NAME" `
+            --notes-file CHANGELOG.md
