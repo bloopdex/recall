@@ -7,10 +7,12 @@ are independent (ADR-0031): the application version here, the database
 schema version (`recall version`), the export format version, and the
 embedding model id/version.
 
-## [1.0.1] — 2026-08-16
+## [1.0.2] — 2026-08-16
 
-Installation, first-run, and release-flow polish. No schema, ranking,
-privacy, or contract changes.
+First GitHub release: installation, first-run, and release-flow polish
+(what was drafted as 1.0.1, plus the fixes that made the release
+workflow pass on Windows runners). No schema, ranking, privacy, or
+contract changes.
 
 ### Added
 
@@ -38,6 +40,22 @@ privacy, or contract changes.
 
 - Search results no longer print internal ranking scores by default;
   they are `--explain`-only.
+- install.sh checksum verification now strips the leading `\` that GNU
+  coreutils (MSYS2 / Git for Windows) print before the hash when the
+  path contains backslashes — the installer no longer refuses a valid
+  binary in that environment.
+- Test-suite hardening for GitHub-hosted runners (test-only, no
+  production behavior changed): the CI capture harness scrubs ambient
+  `GITHUB_*` variables, PowerShell 5.1 test spawns run with a clean
+  `PSModulePath`, the pooling probe skips when `LOCALAPPDATA` is
+  absent, and the concurrency suite accepts the documented
+  migration-race loud failure (ADR-0027).
+
+## [1.0.1] — 2026-08-16
+
+Not released: a release-candidate iteration whose tag never produced a
+GitHub Release (the release workflow's test step failed on Windows
+runners). All of its changes ship in 1.0.2.
 
 ## [1.0.0] — 2026-08-15
 
@@ -120,8 +138,8 @@ checksum-verified install scripts.
   commit can lose that one transaction.
 - Shell integration tested on PowerShell and Bash (generated for Zsh,
   not executed — ADR-0017).
-- No git remote configured yet: once the repository has a GitHub
-  remote, pushing a `vX.Y.Z` tag triggers the release workflow
-  (`.github/workflows/release.yml`) which validates, builds, and
-  publishes the GitHub Release. Release artifacts are never committed
-  (ADR-0031; procedure: `docs/release/RELEASE-CHECKLIST.md`).
+- The repository is on GitHub (bloopdex/recall): pushing a `vX.Y.Z` tag
+  triggers the release workflow (`.github/workflows/release.yml`),
+  which validates, builds, and publishes the GitHub Release. Release
+  artifacts are never committed (ADR-0031; procedure:
+  `docs/release/RELEASE-CHECKLIST.md`).
