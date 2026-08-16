@@ -31,6 +31,16 @@ fn run_with_env(
             .map(|p| p.join("no-model-dir"))
             .unwrap_or_else(|| std::path::PathBuf::from("no-model-dir")),
     );
+    // Scrub the snapshot whitelist from the child's environment first:
+    // tests in this binary run on parallel threads, and the sibling
+    // secret-redaction test mutates these process-global vars in-process.
+    // A spawn during that window (or an ambient var on the runner) must
+    // never leak a snapshot into a test that did not provide one - each
+    // child observes exactly the context its test declares, including
+    // the "no context at all" case.
+    for var in [LAST_COMMAND, LAST_EXIT_CODE, LAST_CWD] {
+        cmd.env_remove(var);
+    }
     for (k, v) in envs {
         cmd.env(k, v);
     }
