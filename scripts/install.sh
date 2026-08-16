@@ -43,7 +43,15 @@ if [ -f "$SUMS" ] && [ "${SKIP_SHA_CHECK:-0}" != "1" ]; then
     fi
     case "$(uname -s)" in
         Darwin) actual=$(shasum -a 256 "$BINARY" | awk '{print $1}') ;;
-        *)      actual=$(sha256sum "$BINARY" | awk '{print $1}') ;;
+        *)
+            actual=$(sha256sum "$BINARY" | awk '{print $1}')
+            # GNU coreutils (MSYS2 / Git for Windows) print a leading '\'
+            # before the hash when the path contains backslashes - the
+            # documented escape marker for names needing disambiguation;
+            # the 64-hex-char hash itself is untouched. Strip the marker
+            # so the comparison is over hashes, not display artifacts.
+            actual="${actual#\\}"
+            ;;
     esac
     if [ "$actual" != "$expected" ]; then
         echo "error: checksum mismatch: expected $expected, got $actual - refusing to install." >&2
