@@ -7,6 +7,38 @@ are independent (ADR-0031): the application version here, the database
 schema version (`recall version`), the export format version, and the
 embedding model id/version.
 
+## [1.0.1] — 2026-08-16
+
+Installation, first-run, and release-flow polish. No schema, ranking,
+privacy, or contract changes.
+
+### Added
+
+- Tag-driven GitHub Releases: pushing a `vX.Y.Z` tag triggers
+  `.github/workflows/release.yml`, which validates the tag against
+  Cargo.toml, runs the full validation suite, builds the release
+  bundle, verifies its checksums, and creates the GitHub Release with
+  the bundle files attached (ADR-0031 Amendment 2).
+- `scripts/uninstall.ps1` — removes the binary and the Recall user-PATH
+  entry (every other entry preserved), never touches memories, the
+  model, or the integrations.
+- Friendly empty-store view for `recall list` on a brand-new database
+  (interactive terminals only).
+
+### Changed
+
+- Windows installer now appends the bin directory to the USER PATH by
+  default (`-SkipPath` opts out); entries are only ever appended and
+  duplicates are never added; the installer reports exactly what
+  changed and what did not (ADR-0031 Amendment).
+- Default runs are quiet: the structured event log moved behind
+  `--verbose`.
+
+### Fixed
+
+- Search results no longer print internal ranking scores by default;
+  they are `--explain`-only.
+
 ## [1.0.0] — 2026-08-15
 
 First release: capture, hybrid keyword + semantic search, shell/git/CI
