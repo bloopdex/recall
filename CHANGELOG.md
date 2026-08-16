@@ -7,7 +7,7 @@ are independent (ADR-0031): the application version here, the database
 schema version (`recall version`), the export format version, and the
 embedding model id/version.
 
-## [1.0.3] — 2026-08-16
+## [1.0.4] — 2026-08-16
 
 First GitHub release: installation, first-run, and release-flow polish
 (what was drafted as 1.0.1, plus the fixes that made the release
@@ -55,6 +55,20 @@ contract changes.
   process-global env could leak a fake shell snapshot into the
   "no snapshot" case on parallel test threads (a runner-timing flake,
   test-only).
+- The shell-snippet harness compares recorded working directories by
+  resolved path (`canonicalize`): the GitHub runner's 8.3 `TEMP`
+  short path (`C:\Users\RUNNER~1\...`) vs PowerShell's long-form
+  `Get-Location` no longer trips the CWD assertion (test-only).
+- The concurrency suite accepts the column-level migration-race loser
+  form (`duplicate column name`) as another documented loud failure
+  of first-run races (ADR-0027; test-only).
+
+## [1.0.3] — 2026-08-16
+
+Not released: the release workflow's test step hit two
+runner-environment test failures (the 8.3 temp-path comparison in the
+shell-snippet suite, and the column-level migration-race loser form in
+the concurrency suite). All of its changes ship in 1.0.4.
 
 ## [1.0.2] — 2026-08-16
 
