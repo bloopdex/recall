@@ -10,6 +10,14 @@ env:
 
 jobs:
   test:
+    # The Rust crate lives at codebase/recall/Cargo.toml, two levels under
+    # the repository root: every Cargo command in this job runs there.
+    # (The `uses:` actions are unaffected by this default and run at the
+    # workspace root, which is where checkout places the repository.)
+    defaults:
+      run:
+        working-directory: codebase/recall
+
     strategy:
       fail-fast: false
       matrix:
@@ -25,8 +33,8 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Clippy (warnings denied)
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (warnings denied, all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Tests
         run: cargo test --all-targets

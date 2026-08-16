@@ -323,7 +323,19 @@ mod tests {
         std::fs::write(repo.join("b.txt"), "uncommitted").unwrap();
 
         let ctx = GitContext::detect(&repo);
-        assert_eq!(ctx.repo_root.as_deref(), Some(repo.as_path()));
+        // `git rev-parse --show-toplevel` may spell the root differently
+        // than the path the repo was created with (Windows: short 8.3
+        // names and slash direction; macOS: /tmp symlinks). Compare the
+        // canonicalized locations, not the raw strings — the assertion
+        // still pins that the discovered root IS this repository.
+        let reported = ctx
+            .repo_root
+            .as_deref()
+            .expect("the repo root must be discovered");
+        assert_eq!(
+            std::fs::canonicalize(reported).expect("the reported root must exist"),
+            std::fs::canonicalize(&repo).expect("the temp repo must exist"),
+        );
         assert_eq!(ctx.branch.as_deref(), Some("main"));
         assert!(ctx.commit.is_some(), "commit SHA should be captured");
         assert!(ctx.changed_files.as_deref().unwrap_or("").contains("b.txt"));
