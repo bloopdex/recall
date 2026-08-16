@@ -7,11 +7,11 @@ are independent (ADR-0031): the application version here, the database
 schema version (`recall version`), the export format version, and the
 embedding model id/version.
 
-## [1.0.2] — 2026-08-16
+## [1.0.3] — 2026-08-16
 
 First GitHub release: installation, first-run, and release-flow polish
 (what was drafted as 1.0.1, plus the fixes that made the release
-workflow pass on Windows runners). No schema, ranking, privacy, or
+workflow pass on GitHub runners). No schema, ranking, privacy, or
 contract changes.
 
 ### Added
@@ -50,6 +50,17 @@ contract changes.
   `PSModulePath`, the pooling probe skips when `LOCALAPPDATA` is
   absent, and the concurrency suite accepts the documented
   migration-race loud failure (ADR-0027).
+- The shell-capture harness now scrubs the `RECALL_*` snapshot
+  whitelist from spawned binaries: a sibling test mutating
+  process-global env could leak a fake shell snapshot into the
+  "no snapshot" case on parallel test threads (a runner-timing flake,
+  test-only).
+
+## [1.0.2] — 2026-08-16
+
+Not released: the release workflow's test step hit a test-suite timing
+flake (the shell-capture env leak above) on the runners. All of its
+changes ship in 1.0.3.
 
 ## [1.0.1] — 2026-08-16
 

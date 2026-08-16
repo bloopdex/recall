@@ -1,6 +1,6 @@
 [package]
 name = "recall"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Personal engineering solution memory — a local-first CLI that remembers how you solved engineering problems."
