@@ -104,7 +104,9 @@ throughout. The concurrency suite was restructured to pin exactly this
 
 A further first-run form (observed on CI runners, 2026-08-16): when
 several processes race to CREATE the database, the migration loser
-fails loudly with "table ... already exists" instead of the busy
-timeout — same guarantee shape (loud, never silent, store healthy,
-retry succeeds), pinned as an accepted loud failure by
+fails loudly instead of hitting the busy timeout — "table ... already
+exists" when it loses the table-creation migration, and "duplicate
+column name" when it loses a later column migration (e.g. migration 3,
+lifecycle_status) — same guarantee shape (loud, never silent, store
+healthy, retry succeeds), pinned as accepted loud failures by
 `concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy`.

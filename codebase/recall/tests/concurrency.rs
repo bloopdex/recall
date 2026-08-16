@@ -198,8 +198,9 @@ fn concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy() {
     // can exhaust the 5 s busy timeout or lose the migration race. The
     // pinned behavior: every process either captures or fails LOUDLY
     // ("database is locked", or the migration loser's "table ...
-    // already exists") — never a silent loss, never corruption — and
-    // the store is healthy and usable afterwards.
+    // already exists" on table creation / "duplicate column name" on a
+    // later column migration) — never a silent loss, never corruption —
+    // and the store is healthy and usable afterwards.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("recall.db");
 
@@ -223,7 +224,8 @@ fn concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy() {
                     ],
                 );
                 let loud_failure = stderr(&out).contains("database is locked")
-                    || stderr(&out).contains("already exists");
+                    || stderr(&out).contains("already exists")
+                    || stderr(&out).contains("duplicate column name");
                 assert!(
                     out.status.success() || loud_failure,
                     "capture {i} failed with an unexpected error: {}",

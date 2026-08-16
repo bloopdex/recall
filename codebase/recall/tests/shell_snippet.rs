@@ -76,8 +76,18 @@ fn powershell_snippet_records_a_failed_command_snapshot() {
         text.contains("cmd /c exit 5"),
         "failed command line must be recorded: {text}"
     );
+    // The runner's TEMP can be an 8.3 short path (C:\Users\RUNNER~1\...)
+    // while PowerShell's Get-Location returns the long form. Compare the
+    // resolved paths, not the raw strings (same class as the git-path
+    // canonicalization: canonicalize resolves short names on Windows).
+    let recorded_cwd = text
+        .lines()
+        .find_map(|line| line.strip_prefix("CWD="))
+        .unwrap_or_default();
+    let recorded = std::fs::canonicalize(recorded_cwd).ok();
+    let expected = std::fs::canonicalize(dir.path()).ok();
     assert!(
-        text.contains(&format!("CWD={}", dir.path().to_string_lossy())),
+        recorded.is_some() && recorded == expected,
         "cwd must be recorded: {text}"
     );
 }
