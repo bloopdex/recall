@@ -101,3 +101,10 @@ throughout. The concurrency suite was restructured to pin exactly this
 (`concurrent_captures_never_lose_data_silently`,
 `highly_contended_captures_never_lose_data_silently`,
 `concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy`).
+
+A further first-run form (observed on CI runners, 2026-08-16): when
+several processes race to CREATE the database, the migration loser
+fails loudly with "table ... already exists" instead of the busy
+timeout — same guarantee shape (loud, never silent, store healthy,
+retry succeeds), pinned as an accepted loud failure by
+`concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy`.

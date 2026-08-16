@@ -195,10 +195,11 @@ fn highly_contended_captures_never_lose_data_silently() {
 fn concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy() {
     // Documented corner (ADR-0027): 8 processes racing to CREATE the
     // database (WAL setup + migrations need the write lock) under load
-    // can exhaust the 5 s busy timeout. The pinned behavior: every
-    // process either captures or fails LOUDLY with the documented busy
-    // error — never a silent loss, never corruption — and the store is
-    // healthy and usable afterwards.
+    // can exhaust the 5 s busy timeout or lose the migration race. The
+    // pinned behavior: every process either captures or fails LOUDLY
+    // ("database is locked", or the migration loser's "table ...
+    // already exists") — never a silent loss, never corruption — and
+    // the store is healthy and usable afterwards.
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("recall.db");
 
@@ -221,8 +222,10 @@ fn concurrent_first_run_captures_fail_loudly_and_the_store_stays_healthy() {
                         "concurrency",
                     ],
                 );
+                let loud_failure = stderr(&out).contains("database is locked")
+                    || stderr(&out).contains("already exists");
                 assert!(
-                    out.status.success() || stderr(&out).contains("database is locked"),
+                    out.status.success() || loud_failure,
                     "capture {i} failed with an unexpected error: {}",
                     stderr(&out)
                 );

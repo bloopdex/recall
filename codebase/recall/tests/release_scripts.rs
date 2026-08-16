@@ -68,7 +68,7 @@ fn install_ps1_places_the_binary_verifies_checksums_and_is_idempotent() {
 
     let script = repo_root().join("scripts/install.ps1");
     // -SkipPath: the test suite must never modify the real user PATH.
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-File",
@@ -93,7 +93,7 @@ fn install_ps1_places_the_binary_verifies_checksums_and_is_idempotent() {
     assert!(bin_dir.join("recall.exe").exists(), "binary must be placed");
 
     // Idempotent: a second install succeeds.
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-File",
@@ -127,7 +127,7 @@ fn install_ps1_refuses_a_tampered_binary() {
 
     let bin_dir = dir.path().join("bin");
     let script = repo_root().join("scripts/install.ps1");
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-File",
@@ -170,6 +170,9 @@ fn install_sh_places_the_binary_when_sh_is_available() {
     let binary = release.join("recall");
     std::fs::copy(common::bin(), &binary).expect("copy test binary");
     // sha256sum lives next to sh on every platform that has sh here.
+    // Some coreutils builds print a leading backslash before the hash
+    // when the reported filename contains backslashes (MSYS2); the hash
+    // itself is always the 64-hex-char token.
     let hash = {
         let out = std::process::Command::new("sha256sum")
             .arg(binary.to_str().unwrap())
@@ -180,6 +183,7 @@ fn install_sh_places_the_binary_when_sh_is_available() {
             .split_whitespace()
             .next()
             .unwrap_or("")
+            .trim_start_matches('\\')
             .to_string()
     };
     assert_eq!(hash.len(), 64, "sha256sum must produce a hash");
@@ -203,10 +207,24 @@ fn install_sh_places_the_binary_when_sh_is_available() {
     assert!(bin_dir.join("recall").exists(), "binary must be placed");
 }
 
+/// A `powershell.exe` (Windows PowerShell 5.1) command with a clean
+/// PSModulePath. The test process may run under any host shell; when
+/// that shell is pwsh 7, the inherited PSModulePath points at pwsh's
+/// own modules and Windows PowerShell 5.1 can no longer find its
+/// built-ins (e.g. Get-FileHash in Microsoft.PowerShell.Utility).
+/// Removing the variable restores 5.1's default module path and makes
+/// the spawns independent of the environment the tests run in.
+#[cfg(windows)]
+fn powershell() -> std::process::Command {
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.env_remove("PSModulePath");
+    cmd
+}
+
 /// Read the real USER PATH (read-only; tests never write it).
 #[cfg(windows)]
 fn user_path() -> String {
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-Command",
@@ -222,7 +240,7 @@ fn user_path() -> String {
 #[cfg(windows)]
 fn path_helper(expr: &str) -> String {
     let script = repo_root().join("scripts/path.ps1");
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-Command",
@@ -319,7 +337,7 @@ fn install_ps1_skip_path_never_touches_the_user_path() {
     let bin_dir = dir.path().join("bin");
     let before = user_path();
     let script = repo_root().join("scripts/install.ps1");
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-File",
@@ -359,7 +377,7 @@ fn uninstall_ps1_removes_only_the_binary_and_is_idempotent() {
     let before = user_path();
     let script = repo_root().join("scripts/uninstall.ps1");
     let run_uninstall = || {
-        let out = std::process::Command::new("powershell")
+        let out = powershell()
             .args([
                 "-NoProfile",
                 "-File",
@@ -397,7 +415,7 @@ fn uninstall_ps1_removes_only_the_binary_and_is_idempotent() {
     let lone_dir = dir.path().join("lone");
     std::fs::create_dir_all(&lone_dir).unwrap();
     std::fs::copy(common::bin(), lone_dir.join("recall.exe")).unwrap();
-    let out = std::process::Command::new("powershell")
+    let out = powershell()
         .args([
             "-NoProfile",
             "-File",

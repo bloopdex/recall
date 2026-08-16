@@ -3,7 +3,13 @@
 
 #[test]
 fn pooling_comparison() {
-    let base = std::env::var("LOCALAPPDATA").expect("LOCALAPPDATA set on Windows");
+    // This is a temporary probe: skip gracefully whenever the ambient
+    // environment does not provide what it needs (CI runners may not
+    // export LOCALAPPDATA, and the model is usually absent anyway).
+    let Ok(base) = std::env::var("LOCALAPPDATA") else {
+        eprintln!("SKIP: LOCALAPPDATA not set");
+        return;
+    };
     let model_dir = std::path::PathBuf::from(base).join("recall/models/all-MiniLM-L6-v2");
     if !model_dir.join("model.onnx").exists() {
         eprintln!("SKIP: model not present");
