@@ -32,6 +32,21 @@ fn ci_env(workflow: &str) -> Vec<(&'static str, &str)> {
     ]
 }
 
+/// The complete whitelist of variables `--from-ci` may read — the same
+/// list pinned by `tests/security.rs::ci_integration_reads_only_whitelisted_environment_variables`.
+const CI_ENV_VARS: &[&str] = &[
+    "GITHUB_WORKFLOW",
+    "GITHUB_JOB",
+    "GITHUB_EVENT_NAME",
+    "GITHUB_REPOSITORY",
+    "GITHUB_SHA",
+    "GITHUB_REF_NAME",
+    "GITHUB_RUN_ID",
+    "GITHUB_RUN_ATTEMPT",
+    "GITHUB_SERVER_URL",
+    "RUNNER_OS",
+];
+
 fn run_with_env(db: &Path, envs: &[(&str, &str)], args: &[&str], stdin: Option<&str>) -> Output {
     let mut cmd = Command::new(bin());
     cmd.arg("--db").arg(db);
@@ -42,6 +57,12 @@ fn run_with_env(db: &Path, envs: &[(&str, &str)], args: &[&str], stdin: Option<&
             .map(|p| p.join("no-model-dir"))
             .unwrap_or_else(|| std::path::PathBuf::from("no-model-dir")),
     );
+    // GitHub Actions runners carry ambient GITHUB_* variables in every
+    // process. Scrub the whitelist first so each test observes exactly
+    // the context it provides — including the "no context at all" case.
+    for var in CI_ENV_VARS {
+        cmd.env_remove(var);
+    }
     for (k, v) in envs {
         cmd.env(k, v);
     }
